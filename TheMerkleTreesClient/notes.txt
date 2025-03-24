@@ -1,0 +1,3 @@
+4001 : Synchronisation avec les autres noeuds
+5001 : API et WebUI
+8080 : Passerelle HTTP

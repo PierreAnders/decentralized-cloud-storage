@@ -1,0 +1,17 @@
+<template>
+    <svg width="25" height="25" viewBox="0 0 18 18" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M16.0219 6.5L16.0219 14.5783C16.0143 15.2449 15.4991 16.5724 13.4992 16.5496C11.4993 16.5267 5.66636 16.46 2.99987 16.4296C2.33325 16.4219 1.00572 15.9067 1.02857 13.9069C1.05143 11.907 1.11809 6.07405 1.14856 3.40756C1.15618 2.74093 1.57135 1.41635 3.17129 1.43054C11 1.5 11 1.5 11 1.5"
+            :stroke="color" stroke-linecap="round" />
+        <path d="M16.5922 1L8.59216 12" :stroke="color" stroke-linecap="round" />
+        <path d="M8.59216 12L5.09216 7" :stroke="color" stroke-linecap="round" />
+    </svg>
+</template>
+
+<script>
+export default {
+    props: {
+        color: String,
+    }
+}
+</script>

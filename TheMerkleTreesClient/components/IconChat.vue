@@ -1,0 +1,15 @@
+<template>
+    <svg width="25" height="25" viewBox="0 0 19 17" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path
+            d="M1 3.35232V7.58649V10.8797C1 12.3852 2.53153 12.7616 3.2973 12.7616H11.5676L14.3243 15.5844C15.0595 16.3371 15.2432 15.898 15.2432 15.5844V12.7616C17.4486 12.7616 18 11.8207 18 9.93881V3.82278C18 1.56456 16.1622 1 15.2432 1H3.75676C1.55135 1 1 2.56821 1 3.35232Z"
+            :stroke="color" />
+    </svg>
+</template>
+
+<script>
+export default {
+    props: {
+        color: String,
+    }
+}
+</script>

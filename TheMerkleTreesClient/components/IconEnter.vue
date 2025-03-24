@@ -1,0 +1,8 @@
+<template>
+    <svg width="32" height="32" viewBox="0 0 30 30" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle  cx="15" cy="15" r="14.4" transform="rotate(90 15 15)" stroke="#838383" stroke-width="1.2"/>
+        <path d="M22 15L6 15" stroke="#838383" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.9016 15.0001L15.9017 7.99992" stroke="#838383" stroke-width="2" stroke-linecap="round"/>
+        <path d="M22.9016 15L15.9016 22" stroke="#838383" stroke-width="2" stroke-linecap="round"/>
+    </svg>
+</template>

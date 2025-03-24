@@ -1,0 +1,44 @@
+version: "3.8"
+services:
+  nuxt-app:
+    build:
+      context: ./TheMerkleTreesClient
+      dockerfile: Dockerfile
+      args:
+        VITE_BASE_URL: ${VITE_BASE_URL}
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_BASE_URL=${VITE_BASE_URL}
+    env_file:
+      - .env
+
+  themerkletrees-server:
+    build:
+      context: ./TheMerkleTrees
+      dockerfile: Dockerfile
+    ports:
+      - "5083:80"
+    env_file:
+      - .env
+
+  mongodb:  
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+
+  ipfs:
+    image: ipfs/kubo:latest
+    ports:
+      - "5001:5001" # API
+      - "8080:8080" # Gateway
+    volumes:
+      - ./ipfs_staging:/export
+      - ./ipfs_data:/data/ipfs
+
+volumes:
+  mongodb_data:
+  ipfs_data:
