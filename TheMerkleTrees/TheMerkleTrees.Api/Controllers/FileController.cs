@@ -16,12 +16,16 @@ namespace TheMerkleTrees.Api.Controllers
         private readonly IFileRepository _fileRepository;
         private readonly HttpClient _httpClient;
         private readonly string _ipfsGatewayUrl;
+        private readonly string _ipfsApiUrl;
+        private readonly bool _isDevelopment;
 
         public FilesController(IFileRepository mongoDbService, HttpClient httpClient, IConfiguration configuration)
         {
             _fileRepository = mongoDbService;
             _httpClient = httpClient;
             _ipfsGatewayUrl = configuration["Ipfs:GatewayUrl"];
+            _ipfsApiUrl = configuration["Ipfs:ApiUrl"];
+            _isDevelopment = bool.Parse(configuration["Environment:IsDevelopment"]);
         }
 
         [HttpPost]
@@ -131,9 +135,8 @@ namespace TheMerkleTrees.Api.Controllers
             
             var formData = new MultipartFormDataContent();
             formData.Add(new ByteArrayContent(encryptedContent), "file", file.FileName);
-
-            // var response = await _httpClient.PostAsync("http://localhost:5001/api/v0/add", formData);
-            var response = await _httpClient.PostAsync("http://ipfs:5001/api/v0/add", formData);
+            
+            var response = await _httpClient.PostAsync(_ipfsApiUrl, formData);
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadFromJsonAsync<AddResponse>();
@@ -222,6 +225,41 @@ namespace TheMerkleTrees.Api.Controllers
 
         private async Task<byte[]> GetFileFromLocalIPFSNode(string cid)
         {
+            if (_isDevelopment)
+            {
+                return await GetFileFromLocalIPFSNodeDevelopment(cid);
+            }
+            else
+            {
+                return await GetFileFromLocalIPFSNodeProduction(cid);
+            }
+        }
+
+        private async Task<byte[]> GetFileFromLocalIPFSNodeDevelopment(string cid)
+        {
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "ipfs",
+                Arguments = $"cat {cid}",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using (var process = new Process { StartInfo = processStartInfo })
+            {
+                process.Start();
+                using (var ms = new MemoryStream())
+                {
+                    await process.StandardOutput.BaseStream.CopyToAsync(ms);
+                    process.WaitForExit();
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private async Task<byte[]> GetFileFromLocalIPFSNodeProduction(string cid)
+        {
             var url = $"{_ipfsGatewayUrl}{cid}";
 
             using (var httpClient = new HttpClient())
@@ -241,28 +279,6 @@ namespace TheMerkleTrees.Api.Controllers
             }
         }
 
-        // private async Task<byte[]> GetFileFromLocalIPFSNode(string cid)
-        // {
-        //     var processStartInfo = new ProcessStartInfo
-        //     {
-        //         FileName = "ipfs",
-        //         Arguments = $"cat {cid}",
-        //         RedirectStandardOutput = true,
-        //         UseShellExecute = false,
-        //         CreateNoWindow = true
-        //     };
-
-        //     using (var process = new Process { StartInfo = processStartInfo })
-        //     {
-        //         process.Start();
-        //         using (var ms = new MemoryStream())
-        //         {
-        //             await process.StandardOutput.BaseStream.CopyToAsync(ms);
-        //             process.WaitForExit();
-        //             return ms.ToArray();
-        //         }
-        //     }
-        // }
         private class AddResponse
         {
             public string Hash { get; set; }

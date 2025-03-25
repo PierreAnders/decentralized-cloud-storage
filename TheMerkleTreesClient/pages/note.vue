@@ -46,9 +46,6 @@
                         <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.213 9.787a3.391 3.391 0 0 0-4.795 0l-3.425 3.426a3.39 3.39 0 0 0 4.795 4.794l.321-.304m-.321-4.49a3.39 3.39 0 0 0 4.795 0l3.424-3.426a3.39 3.39 0 0 0-4.794-4.795l-1.028.961"/>
                         </svg>
                     </button>
-                    <!-- <input type="file" @change="handleImageUpload" accept="image/*" style="display: none;"
-                        id="image-upload">
-                    <label for="image-upload" class="toolbar-button">Téléverser une image</label> -->
                     <button class="m-0.5" @click="editor.chain().focus().toggleTaskList().run()"
                         :class="{ 'is-active': editor.isActive('taskList') }">
                         <svg class="w-5 h-5 text-light-gray" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
@@ -85,24 +82,12 @@
                         <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6H6m12 4H6m12 4H6m12 4H6"/>
                         </svg>
                     </button>
-                    <!-- <button @click="editor.chain().focus().toggleHeading({ level: 1 }).run()"
-                        :class="{ 'is-active': editor.isActive('heading', { level: 1 }) }">
-                        <svg class="w-5 h-5 text-gray-800" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
-                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6.2V5h11v1.2M8 5v14m-3 0h6m2-6.8V11h8v1.2M17 11v8m-1.5 0h3"/>
-                        </svg>
-                    </button> -->
                     <button class="m-0.5" @click="editor.chain().focus().toggleHeading({ level: 2 }).run()"
                         :class="{ 'is-active': editor.isActive('heading', { level: 2 }) }">
                         <svg class="w-5 h-5 text-light-gray" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
                             <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6.2V5h11v1.2M8 5v14m-3 0h6m2-6.8V11h8v1.2M17 11v8m-1.5 0h3"/>
                         </svg>
                     </button>
-                    <!-- <button @click="editor.chain().focus().toggleHeading({ level: 3 }).run()"
-                        :class="{ 'is-active': editor.isActive('heading', { level: 3 }) }">
-                        <svg class="w-5 h-5 text-gray-800" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
-                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 6.2V5h11v1.2M8 5v14m-3 0h6m2-6.8V11h8v1.2M17 11v8m-1.5 0h3"/>
-                        </svg>
-                    </button> -->
                     <button class="m-0.5" @click="toggleFullscreen">
                         <svg class="w-5 h-5 text-light-gray" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24" height="24" fill="none" viewBox="0 0 24 24">
                         <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 4H4m0 0v4m0-4 5 5m7-5h4m0 0v4m0-4-5 5M8 20H4m0 0v-4m0 4 5-5m7 5h4m0 0v-4m0 4-5-5"/>
@@ -127,6 +112,8 @@
 </template>
 
 <script setup>
+import axios from "axios";
+const BASE_URL = import.meta.env.VITE_BASE_URL;
 import { useEditor, EditorContent } from '@tiptap/vue-3'
 import StarterKit from '@tiptap/starter-kit'
 import 'github-markdown-css/github-markdown-light.css'
@@ -214,13 +201,48 @@ onMounted(() => {
 })
 
 // Fonction pour sauvegarder le contenu
-const saveContent = () => {
+const saveContent = async () => {
     if (editor.value && process.client) {
         const htmlContent = editor.value.getHTML()
         localStorage.setItem('draftContent', htmlContent)
         console.log('Contenu HTML :', htmlContent)
-        alert('Contenu sauvegardé !')
+
+        try {
+            // Récupération du JWT Token
+            const jwtToken = await getJwtToken();
+
+            // Initialisation de FormData
+            const formData = new FormData();
+            formData.append("file", new Blob([htmlContent], { type: 'text/html' }), note.value.title);
+            formData.append("category", 'note');
+            formData.append("isPublic", true);
+            formData.append("userAddress", 'user-address');
+
+            const response = await axios.post(`${BASE_URL}/api/Files/upload`, formData, {
+                headers: {
+                    Authorization: `Bearer ${jwtToken}`,
+                    'Content-Type': 'multipart/form-data',
+                },
+            });
+
+            console.log('Note sauvegardée avec succès :', response.data)
+            alert('Contenu sauvegardé !')
+        } catch (error) {
+            console.error('Erreur lors de la sauvegarde de la note :', error)
+            alert('Erreur lors de la sauvegarde de la note.')
+        }
     }
+}
+
+const getJwtToken = async () => {
+    const jwtToken = localStorage.getItem("access_token");
+
+    if (!jwtToken) {
+        console.error("Le jeton JWT n'est pas disponible.");
+        this.$router.push("/");
+        return;
+    }
+    return jwtToken;
 }
 
 // Fonction pour insérer un lien
@@ -282,7 +304,7 @@ const toggleFullscreen = () => {
   padding: 15px;
   border: 1px solid #f2f2f2;
   border-radius: 8px;
-  min-height: 380px; 
+  min-height: 380px;
   margin: 0 auto;
   background-color: #f2f2f2;
   font-family: 'Arial', sans-serif;
@@ -303,7 +325,7 @@ const toggleFullscreen = () => {
     font-size: 14px;
     min-height: 60vh;
   }
-  
+
   .toolbar button {
     padding: 3px 6px;
     font-size: 12px;
