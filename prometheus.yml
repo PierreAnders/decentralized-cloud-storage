@@ -5,7 +5,3 @@ scrape_configs:
   - job_name: 'themerkletrees-server'
     static_configs:
       - targets: ['themerkletrees-server:80']
-
-  - job_name: 'nuxt-app'
-    static_configs:
-      - targets: ['nuxt-app:3000']
