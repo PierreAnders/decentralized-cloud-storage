@@ -8,6 +8,7 @@ using TheMerkleTrees.Domain.Interfaces.Repositories;
 using TheMerkleTrees.Infrastructure.Configurations;
 using TheMerkleTrees.Infrastructure.Repositories;
 using Microsoft.Extensions.Logging;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -110,6 +111,9 @@ app.UseCors("SpecificOrigins");
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseHttpMetrics();
+app.MapMetrics();
 
 app.MapControllers();
 

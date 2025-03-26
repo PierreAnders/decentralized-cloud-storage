@@ -7,6 +7,7 @@ using System.Text;
 using TheMerkleTrees.Domain.Interfaces.Repositories;
 using TheMerkleTrees.Domain.Models;
 using Microsoft.Extensions.Logging;
+using Prometheus;
 
 namespace TheMerkleTrees.Api.Controllers
 {
@@ -18,6 +19,9 @@ namespace TheMerkleTrees.Api.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthController> _logger;
         private readonly JwtSettings _jwtSettings;
+        
+        private static readonly Counter RegistrationCounter = Metrics
+            .CreateCounter("auth_registrations_total", "Total number of successful registrations.");
 
         public AuthController(
             IUserRepository userRepository,
@@ -73,6 +77,9 @@ namespace TheMerkleTrees.Api.Controllers
             {
                 await _userRepository.CreateUserAsync(user);
                 _logger.LogInformation("User registered successfully: {Email}", newUser.Email);
+                
+                RegistrationCounter.Inc();
+                
                 return Ok(new { message = "User registered successfully" });
             }
             catch (Exception ex)
