@@ -23,6 +23,7 @@
                                 id="button-add-folder" @click="isButtonClicked = !isButtonClicked"
                                 v-show="!isButtonClicked" />
                         </div>
+                        <h2 class="text-light-gray text-sm mt-2" v-show="!isButtonClicked">Ajouter</h2>
                         <div id="icon-add-folder" v-show="isButtonClicked">
                             <div class="flex flex-col items-center">
                                 <ImageFolder class="pb-[2px]" />

@@ -21,6 +21,7 @@
                         id="button-add-folder" @click="isButtonClicked = !isButtonClicked"
                         v-show="!isButtonClicked" />
                 </div>
+                <h2 class="text-light-gray text-sm mt-2" v-show="!isButtonClicked">Ajouter un favori</h2>
                 <div id="icon-add-folder" v-show="isButtonClicked">
                     <div class="flex flex-col items-center">
                         <input v-model="newShortcutUrl" placeholder="URL"
@@ -29,7 +30,7 @@
                         <input v-model="newShortcutTitle" placeholder="Title"
                             class="flex w-48 h-8 px-4 mr-2 text-sm text-white border-2 rounded-md placeholder-light-gray bg-dark-gray border-dark-gray focus:outline-none focus:border-blue"
                             required />
-                        <button class="pt-2 transition-transform transform hover:scale-110" type="submit">
+                        <button class="pt-3 transition-transform transform hover:scale-110" type="submit">
                             <IconSubmenuAddFolder />
                         </button>
                     </div>

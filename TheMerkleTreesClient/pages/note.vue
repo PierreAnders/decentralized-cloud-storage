@@ -9,7 +9,7 @@
             <div class="flex flex-col items-center justify-center mt-10">
                 <input
                     class="w-56 w-3/4 h-8 px-4 mb-4 mx-auto text-sm text-white border-2 rounded-md bg-dark-gray placeholder-light-gray border-dark-gray focus:outline-none focus:border-blue"
-                    type="text" v-model="note.title" placeholder="Name :">
+                    type="text" v-model="note.title" placeholder="Nouvelle note">
                 <div v-if="editor" class="toolbar">
                     <button class="m-0.5" @click="editor.chain().focus().toggleBold().run()"
                         :class="{ 'is-active': editor.isActive('bold') }">
@@ -103,9 +103,10 @@
                     <editor-content class="markdown-body rounded-xl p-6" :editor="editor" />
                 </div>
 
-                <button class="pt-6 pb-12 text-white" @click="saveContent">
+                <button class="pt-6 text-white" @click="saveContent">
                     <IconSave class="transition-transform transform hover:scale-110" />
                 </button>
+                <h2 class="text-light-gray mt-1 pb-12">Enregistrer</h2>
             </div>
         </div>
     </div>

@@ -40,9 +40,12 @@
             class="p-2 border rounded-md bg-neutral-300 text-neutral-800 focus:outline-none focus:border-amber-800"
             @change="uploadFile" style="display: none" />
         </label>
-        <div>
-          <input type="checkbox" class="mr-2" name="isPublic" id="isPublic" v-model="isPublic" />
-          <label for="isPublic" class="text-light-gray">Public</label>
+        <div class="flex flex-col items-center">
+          <h2 class="text-light-gray text-sm">Ajouter un fichier</h2>
+          <div class="mt-1">
+            <label for="isPublic" class="text-light-gray text-sm mr-2">Public</label>
+            <input type="checkbox" class="opacity-90" name="isPublic" id="isPublic" v-model="isPublic" />
+          </div>
         </div>
       </div>
     </div>
