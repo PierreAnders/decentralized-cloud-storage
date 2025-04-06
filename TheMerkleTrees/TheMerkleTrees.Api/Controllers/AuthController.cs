@@ -8,6 +8,7 @@ using TheMerkleTrees.Domain.Interfaces.Repositories;
 using TheMerkleTrees.Domain.Models;
 using Microsoft.Extensions.Logging;
 using Prometheus;
+using TheMerkleTrees.Api.Services;
 
 namespace TheMerkleTrees.Api.Controllers
 {
@@ -19,6 +20,9 @@ namespace TheMerkleTrees.Api.Controllers
         private readonly IConfiguration _configuration;
         private readonly ILogger<AuthController> _logger;
         private readonly JwtSettings _jwtSettings;
+        private readonly IMasterKeyService _masterKeyService;
+        private readonly string _masterKeySalt;
+        private readonly int _keyDerivationIterations;
         
         private static readonly Counter RegistrationCounter = Metrics
             .CreateCounter("auth_registrations_total", "Total number of successful registrations.");
@@ -26,11 +30,13 @@ namespace TheMerkleTrees.Api.Controllers
         public AuthController(
             IUserRepository userRepository,
             IConfiguration configuration,
-            ILogger<AuthController> logger)
+            ILogger<AuthController> logger,
+            IMasterKeyService masterKeyService)
         {
             _userRepository = userRepository;
             _configuration = configuration;
             _logger = logger;
+            _masterKeyService = masterKeyService;
             
             _jwtSettings = new JwtSettings
             {
@@ -39,42 +45,66 @@ namespace TheMerkleTrees.Api.Controllers
                 Audience = Environment.GetEnvironmentVariable("JWT_AUDIENCE") ?? configuration["Jwt:Audience"],
                 ExpirationMinutes = int.TryParse(configuration["Jwt:ExpirationMinutes"], out var exp) ? exp : 120
             };
+            
+            // Récupérer les paramètres de dérivation de clé
+            _masterKeySalt = Environment.GetEnvironmentVariable("MASTER_KEY_SALT") ?? 
+                             configuration["Crypto:MasterKeySalt"] ?? 
+                             "TheMerkleTreesDefaultSalt";
+                             
+            _keyDerivationIterations = int.TryParse(
+                Environment.GetEnvironmentVariable("KEY_DERIVATION_ITERATIONS") ?? 
+                configuration["Crypto:KeyDerivationIterations"], 
+                out var iterations) ? iterations : 10000;
 
-            ValidateJwtSettings();
+            try
+            {
+                ValidateJwtSettings();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la validation des paramètres JWT");
+                // Ne pas lever d'exception ici, permettre à l'application de démarrer
+                // Les endpoints vérifieront les paramètres avant utilisation
+            }
         }
 
         private void ValidateJwtSettings()
         {
             if (string.IsNullOrEmpty(_jwtSettings.Key) || _jwtSettings.Key.Length < 32)
-                throw new ArgumentException("JWT Key must be at least 32 characters long");
+                _logger.LogWarning("JWT Key doit contenir au moins 32 caractères");
 
             if (string.IsNullOrEmpty(_jwtSettings.Issuer))
-                throw new ArgumentException("JWT Issuer is required");
+                _logger.LogWarning("JWT Issuer est requis");
 
             if (string.IsNullOrEmpty(_jwtSettings.Audience))
-                throw new ArgumentException("JWT Audience is required");
+                _logger.LogWarning("JWT Audience est requis");
         }
 
         [HttpPost("register")]
         public async Task<IActionResult> Register([FromBody] Authentication newUser)
         {
-            _logger.LogInformation("Register endpoint called for email: {Email}", newUser.Email);
-
-            var existingUser = await _userRepository.GetUserByEmailAsync(newUser.Email);
-            if (existingUser != null)
-            {
-                _logger.LogWarning("Registration failed - Email already in use: {Email}", newUser.Email);
-                return BadRequest(new { message = "Email already in use" });
-            }
-
-            var user = new User
-            {
-                Email = newUser.Email,
-                PasswordHash = HashPassword(newUser.Password)
-            };
-
             try
             {
+                _logger.LogInformation("Register endpoint called for email: {Email}", newUser.Email);
+
+                if (string.IsNullOrEmpty(newUser.Email) || string.IsNullOrEmpty(newUser.Password))
+                {
+                    return BadRequest(new { message = "Email et mot de passe sont requis" });
+                }
+
+                var existingUser = await _userRepository.GetUserByEmailAsync(newUser.Email);
+                if (existingUser != null)
+                {
+                    _logger.LogWarning("Registration failed - Email already in use: {Email}", newUser.Email);
+                    return BadRequest(new { message = "Email already in use" });
+                }
+
+                var user = new User
+                {
+                    Email = newUser.Email,
+                    PasswordHash = HashPassword(newUser.Password)
+                };
+
                 await _userRepository.CreateUserAsync(user);
                 _logger.LogInformation("User registered successfully: {Email}", newUser.Email);
                 
@@ -85,29 +115,64 @@ namespace TheMerkleTrees.Api.Controllers
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Registration failed for email: {Email}", newUser.Email);
-                return Problem("An error occurred during registration.");
+                return StatusCode(500, new { message = "Une erreur est survenue lors de l'inscription", error = ex.Message });
             }
         }
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] Authentication currentUser)
         {
-            _logger.LogInformation("Login attempt for email: {Email}", currentUser.Email);
-
-            var user = await _userRepository.GetUserByEmailAsync(currentUser.Email);
-            if (user == null || !VerifyPassword(currentUser.Password, user.PasswordHash))
+            try
             {
-                _logger.LogWarning("Invalid login attempt for email: {Email}", currentUser.Email);
-                return Unauthorized(new { message = "Invalid email or password" });
-            }
+                _logger.LogInformation("Login attempt for email: {Email}", currentUser.Email);
 
-            var token = GenerateJwtToken(user);
-            _logger.LogInformation("Successful login for email: {Email}", currentUser.Email);
-            
-            return Ok(new { 
-                access_token = token,
-                expires_in = _jwtSettings.ExpirationMinutes * 60
-            });
+                if (string.IsNullOrEmpty(currentUser.Email) || string.IsNullOrEmpty(currentUser.Password))
+                {
+                    return BadRequest(new { message = "Email et mot de passe sont requis" });
+                }
+
+                var user = await _userRepository.GetUserByEmailAsync(currentUser.Email);
+                if (user == null || !VerifyPassword(currentUser.Password, user.PasswordHash))
+                {
+                    _logger.LogWarning("Invalid login attempt for email: {Email}", currentUser.Email);
+                    return Unauthorized(new { message = "Invalid email or password" });
+                }
+
+                // Vérifier les paramètres JWT avant de générer le token
+                if (string.IsNullOrEmpty(_jwtSettings.Key) || _jwtSettings.Key.Length < 32)
+                {
+                    _logger.LogError("JWT Key non configurée ou trop courte");
+                    return StatusCode(500, new { message = "Erreur de configuration du serveur" });
+                }
+
+                // Générer la clé maîtresse à partir du mot de passe
+                byte[] masterKey = CryptoUtils.DeriveKeyFromPassword(
+                    currentUser.Password, 
+                    currentUser.Email, 
+                    _masterKeySalt, 
+                    _keyDerivationIterations);
+                
+                // Générer le token JWT
+                var token = GenerateJwtToken(user);
+                
+                // Calculer la date d'expiration
+                var expiresAt = DateTime.UtcNow.AddMinutes(_jwtSettings.ExpirationMinutes);
+                
+                // Stocker la clé maîtresse en mémoire
+                _masterKeyService.StoreKey(user.Email, masterKey, expiresAt);
+                
+                _logger.LogInformation("Successful login for email: {Email}, master key stored", currentUser.Email);
+                
+                return Ok(new { 
+                    access_token = token,
+                    expires_in = _jwtSettings.ExpirationMinutes * 60
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Login failed for email: {Email}", currentUser.Email);
+                return StatusCode(500, new { message = "Une erreur est survenue lors de la connexion", error = ex.Message });
+            }
         }
 
         private string HashPassword(string password)

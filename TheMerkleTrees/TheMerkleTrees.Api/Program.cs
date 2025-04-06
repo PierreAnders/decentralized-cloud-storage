@@ -9,6 +9,7 @@ using TheMerkleTrees.Infrastructure.Configurations;
 using TheMerkleTrees.Infrastructure.Repositories;
 using Microsoft.Extensions.Logging;
 using Prometheus;
+using TheMerkleTrees.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -58,6 +59,7 @@ builder.Services.AddSingleton<IFileRepository, FileRepository>();
 builder.Services.AddSingleton<ICategoryRepository, CategoryRepository>();
 builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<IShortcutRepository, ShortcutRepository>();
+builder.Services.AddSingleton<IMasterKeyService, MasterKeyService>();
 
 builder.Services.AddHttpContextAccessor();
 

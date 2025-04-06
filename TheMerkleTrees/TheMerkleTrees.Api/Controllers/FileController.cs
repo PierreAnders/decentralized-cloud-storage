@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Security.Cryptography;
 using Microsoft.AspNetCore.Authorization;
 using TheMerkleTrees.Domain.Interfaces.Repositories;
+using TheMerkleTrees.Api.Services;
 using File = TheMerkleTrees.Domain.Models.File;
 
 namespace TheMerkleTrees.Api.Controllers
@@ -18,14 +19,23 @@ namespace TheMerkleTrees.Api.Controllers
         private readonly string _ipfsGatewayUrl;
         private readonly string _ipfsApiUrl;
         private readonly bool _isDevelopment;
+        private readonly IMasterKeyService _masterKeyService;
+        private readonly ILogger<FilesController> _logger;
 
-        public FilesController(IFileRepository mongoDbService, HttpClient httpClient, IConfiguration configuration)
+        public FilesController(
+            IFileRepository mongoDbService, 
+            HttpClient httpClient, 
+            IConfiguration configuration,
+            IMasterKeyService masterKeyService,
+            ILogger<FilesController> logger)
         {
             _fileRepository = mongoDbService;
             _httpClient = httpClient;
             _ipfsGatewayUrl = configuration["Ipfs:GatewayUrl"];
             _ipfsApiUrl = configuration["Ipfs:ApiUrl"];
             _isDevelopment = bool.Parse(configuration["Environment:IsDevelopment"]);
+            _masterKeyService = masterKeyService;
+            _logger = logger;
         }
 
         [HttpPost]
@@ -97,6 +107,12 @@ namespace TheMerkleTrees.Api.Controllers
                 return BadRequest("No file uploaded.");
             }
             
+            // Vérifier si la clé maîtresse est disponible
+            if (!isPublic && !_masterKeyService.HasKey(userId))
+            {
+                _logger.LogWarning("Tentative d'upload de fichier privé sans clé maîtresse pour l'utilisateur: {UserId}", userId);
+                return BadRequest("Vous devez vous reconnecter pour pouvoir uploader des fichiers privés.");
+            }
 
             byte[] fileContent;
             using (var ms = new MemoryStream())
@@ -106,8 +122,8 @@ namespace TheMerkleTrees.Api.Controllers
             }
 
             byte[] encryptedContent;
-            string key = null;
-            string iv = null;
+            string encryptedKey = null;
+            string encryptedIv = null;
 
             if (!isPublic)
             {
@@ -115,9 +131,14 @@ namespace TheMerkleTrees.Api.Controllers
                 {
                     aes.GenerateKey();
                     aes.GenerateIV();
-                    key = Convert.ToBase64String(aes.Key);
-                    iv = Convert.ToBase64String(aes.IV);
-
+                    
+                    // Récupérer la clé maîtresse
+                    byte[] masterKey = _masterKeyService.GetKey(userId);
+                    
+                    // Chiffrer la clé AES et l'IV avec la clé maîtresse
+                    encryptedKey = CryptoUtils.EncryptWithMasterKey(aes.Key, masterKey);
+                    encryptedIv = CryptoUtils.EncryptWithMasterKey(aes.IV, masterKey);
+                    
                     using (var encryptor = aes.CreateEncryptor(aes.Key, aes.IV))
                     using (var msEncrypt = new MemoryStream())
                     using (var csEncrypt = new CryptoStream(msEncrypt, encryptor, CryptoStreamMode.Write))
@@ -151,8 +172,8 @@ namespace TheMerkleTrees.Api.Controllers
                 Category = category,
                 IsPublic = isPublic,
                 Owner = userId,
-                Key = key,
-                IV = iv,
+                Key = encryptedKey,
+                IV = encryptedIv,
                 Extension = Path.GetExtension(file.FileName)
             };
 
@@ -171,7 +192,7 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            var decodedName = Uri.UnescapeDataString(name);
+            // var decodedName = Uri.UnescapeDataString(name);
             var file = await _fileRepository.GetAsync(name, userId);
             if (file == null)
             {
@@ -185,7 +206,7 @@ namespace TheMerkleTrees.Api.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur lors de la récupération via le nœud local : {ex.Message}");
+                _logger.LogError(ex, "Erreur lors de la récupération via le nœud IPFS pour le fichier: {FileName}", file.Name);
                 return BadRequest("Impossible de récupérer le fichier depuis IPFS.");
             }
 
@@ -193,11 +214,22 @@ namespace TheMerkleTrees.Api.Controllers
             {
                 return File(fileContent, "application/octet-stream", file.Name);
             }
+            
+            // Vérifier si la clé maîtresse est disponible
+            if (!_masterKeyService.HasKey(userId))
+            {
+                _logger.LogWarning("Tentative de déchiffrement sans clé maîtresse pour l'utilisateur: {UserId}", userId);
+                return BadRequest("Vous devez vous reconnecter pour pouvoir déchiffrer des fichiers privés.");
+            }
 
             try
             {
-                byte[] key = Convert.FromBase64String(file.Key);
-                byte[] iv = Convert.FromBase64String(file.IV);
+                // Récupérer la clé maîtresse
+                byte[] masterKey = _masterKeyService.GetKey(userId);
+                
+                // Déchiffrer la clé AES et l'IV avec la clé maîtresse
+                byte[] key = CryptoUtils.DecryptWithMasterKey(file.Key, masterKey);
+                byte[] iv = CryptoUtils.DecryptWithMasterKey(file.IV, masterKey);
 
                 using (Aes aes = Aes.Create())
                 {
@@ -218,7 +250,7 @@ namespace TheMerkleTrees.Api.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur lors du déchiffrement : {ex.Message}");
+                _logger.LogError(ex, "Erreur lors du déchiffrement du fichier: {FileName}", file.Name);
                 return StatusCode(500, "Erreur interne du serveur lors du déchiffrement du fichier.");
             }
         }
@@ -273,7 +305,7 @@ namespace TheMerkleTrees.Api.Controllers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Erreur lors de la récupération depuis IPFS : {ex.Message}");
+                    _logger.LogError(ex, "Erreur lors de la récupération depuis IPFS pour le CID: {CID}", cid);
                     throw;
                 }
             }
