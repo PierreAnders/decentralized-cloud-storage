@@ -55,6 +55,7 @@
 <script>
 import axios from "axios";
 import { useTextContentStore } from "../../textContentStore.js";
+import pbkdf2CryptoService from "../../pbkdf2CryptoService.js"; // Import du service de chiffrement PBKDF2
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 export default {
@@ -108,137 +109,247 @@ export default {
       try {
         const jwtToken = this.getJwtToken();
 
+        // Vérifier si l'utilisateur a défini son mot de passe
+        if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
+          const password = await this.promptForPassword();
+          if (!password) {
+            alert("Mot de passe requis pour déchiffrer le fichier.");
+            return;
+          }
+          pbkdf2CryptoService.setUserPassword(password);
+        }
+
         const axiosConfig = {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
           },
-          responseType: "blob",
+          responseType: "arraybuffer",
         };
 
+        // Récupération du fichier chiffré
         const response = await axios.get(
-          `${BASE_URL}/api/Files/decrypt/${fileName}`,
+          `${BASE_URL}/api/Files/file/${fileName}`,
           axiosConfig
         );
 
-        // Création d'un blob (Binary Large OBject, ensemble de données binaires) à partir des données de la réponse
-        const blob = new Blob([response.data]);
+        // Si le fichier est public, pas besoin de déchiffrement
+        if (this.isFilePublic(fileName)) {
+          const blob = new Blob([response.data]);
+          this.saveBlob(blob, fileName);
+          return;
+        }
 
-        // Création d'une URL pour le blob
-        const url = window.URL.createObjectURL(blob);
+        // Récupération du sel associé au fichier
+        const saltResponse = await axios.get(
+          `${BASE_URL}/api/Files/salt/${fileName}`,
+          {
+            headers: {
+              Authorization: `Bearer ${jwtToken}`,
+            },
+          }
+        );
 
-        // Création d'un lien pointant vers le blob
-        const link = document.createElement("a");
-        link.href = url;
+        const salt = saltResponse.data.salt;
+        
+        if (!salt) {
+          console.error("Sel de déchiffrement non trouvé pour ce fichier");
+          alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
+          return;
+        }
 
-        // Ajout de l'attribut 'download' au lien, avec le nom du fichier original
-        link.setAttribute("download", fileName);
+        // Déchiffrement du fichier avec le mot de passe et le sel
+        const fileContent = await pbkdf2CryptoService.decryptData(
+          response.data,
+          salt
+        );
 
-        // Ajout du lien au corps de la page HTML
-        document.body.appendChild(link);
-
-        // Déclenchement du clic sur le lien, ce qui lance le téléchargement du fichier
-        link.click();
-
-        // Suppression du lien du corps de la page
-        link.remove();
-
-        // Suppression de l'URL créée pour le blob, pour libérer les ressources
-        window.URL.revokeObjectURL(url);
+        // Création d'un blob à partir des données déchiffrées
+        const blob = new Blob([fileContent]);
+        this.saveBlob(blob, fileName);
       } catch (error) {
-        console.error(error);
+        console.error("Erreur lors du téléchargement:", error);
+        
+        // Si l'erreur est due à un mauvais mot de passe, demander à nouveau
+        if (error.message && error.message.includes("déchiffrement")) {
+          alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
+          pbkdf2CryptoService.clearUserPassword();
+        } else {
+          alert("Erreur lors du téléchargement du fichier.");
+        }
       }
     },
 
-    openFile(fileName) {
-      const jwtToken = this.getJwtToken();
-      const fileType = this.getFileType(fileName);
-      const responseType = fileType === "html" ? "text" : "arraybuffer";
+    // Fonction utilitaire pour sauvegarder un blob en tant que fichier
+    saveBlob(blob, fileName) {
+      // Création d'une URL pour le blob
+      const url = window.URL.createObjectURL(blob);
 
-      const axiosConfig = {
-        headers: { Authorization: `Bearer ${jwtToken}` },
-        responseType: responseType,
-      };
+      // Création d'un lien pointant vers le blob
+      const link = document.createElement("a");
+      link.href = url;
 
-      axios
-        .get(`${BASE_URL}/api/Files/decrypt/${fileName}`, axiosConfig)
-        .then((response) => {
-          const fileType = this.getFileType(fileName);
+      // Ajout de l'attribut 'download' au lien, avec le nom du fichier original
+      link.setAttribute("download", fileName);
 
-          if (
-            fileType === "pdf" ||
-            fileType === "html" ||
-            fileType === "txt" ||
-            fileType === "md" ||
-            fileType === "csv" ||
-            fileType === "xml" ||
-            fileType === "json" ||
-            fileType === "svg" ||
-            fileType === "webp" ||
-            fileType === "ico" ||
-            fileType === "js" ||
-            fileType === "css" ||
-            ["png", "jpg", "jpeg", "gif", "mp3", "mp4", "webm", "wav", "ogg", "mov"].includes(fileType)
-          ) {
-            let type_blob;
+      // Ajout du lien au corps de la page HTML
+      document.body.appendChild(link);
 
-            if (fileType === "pdf") {
-              type_blob = "application/pdf";
-            }
-            else if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(fileType)) {
-              type_blob = fileType === "svg" ? "image/svg+xml" :
-                fileType === "ico" ? "image/x-icon" :
-                  `image/${fileType}`;
-            }
-            else if (fileType === "txt" || fileType === "md") {
-              this.displayTextFile(response.data, true);
-              return;
-            }
-            else if (fileType === "html") {
-              const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
-              useTextContentStore().setTextContent(response.data);
-              useTextContentStore().setFileNameWithoutExtension(fileName);
-              this.$router.push("/note");
-              return;
-            }
-            else if (fileType === "csv") {
-              type_blob = "text/csv";
-            }
-            else if (fileType === "xml") {
-              type_blob = "application/xml";
-            }
-            else if (fileType === "json") {
-              type_blob = "application/json";
-            }
-            else if (fileType === "js") {
-              type_blob = "application/javascript";
-            }
-            else if (fileType === "css") {
-              type_blob = "text/css";
-            }
-            else if (["mp3", "wav", "ogg"].includes(fileType)) {
-              type_blob = fileType === "mp3" ? "audio/mpeg" :
-                fileType === "wav" ? "audio/wav" :
-                  "audio/ogg";
-            }
-            else if (["mp4", "webm", "mov"].includes(fileType)) {
-              type_blob = fileType === "mp4" ? "video/mp4" :
-                fileType === "webm" ? "video/webm" :
-                  "video/quicktime";
-            }
+      // Déclenchement du clic sur le lien, ce qui lance le téléchargement du fichier
+      link.click();
 
-            const blob = new Blob([response.data], { type: type_blob });
-            const url = window.URL.createObjectURL(blob);
-            const newTab = window.open(url, "_blank");
+      // Suppression du lien du corps de la page
+      link.remove();
 
-            if (!newTab) {
-              console.error("Ouverture bloquée par le navigateur");
-              window.URL.revokeObjectURL(url);
-            }
-          } else {
-            console.error("Type de fichier non supporté :", fileType);
+      // Suppression de l'URL créée pour le blob, pour libérer les ressources
+      window.URL.revokeObjectURL(url);
+    },
+
+    async openFile(fileName) {
+      try {
+        const jwtToken = this.getJwtToken();
+        const fileType = this.getFileType(fileName);
+        
+        // Vérifier si l'utilisateur a défini son mot de passe
+        if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
+          const password = await this.promptForPassword();
+          if (!password) {
+            alert("Mot de passe requis pour déchiffrer le fichier.");
+            return;
           }
-        })
-        .catch((error) => console.error(error));
+          pbkdf2CryptoService.setUserPassword(password);
+        }
+        
+        const axiosConfig = {
+          headers: { Authorization: `Bearer ${jwtToken}` },
+          responseType: "arraybuffer",
+        };
+
+        // Récupération du fichier chiffré
+        const response = await axios.get(
+          `${BASE_URL}/api/Files/file/${fileName}`,
+          axiosConfig
+        );
+
+        let fileContent;
+        
+        // Si le fichier est public, pas besoin de déchiffrement
+        if (this.isFilePublic(fileName)) {
+          fileContent = response.data;
+        } else {
+          // Récupération du sel associé au fichier
+          const saltResponse = await axios.get(
+            `${BASE_URL}/api/Files/salt/${fileName}`,
+            {
+              headers: {
+                Authorization: `Bearer ${jwtToken}`,
+              },
+            }
+          );
+
+          const salt = saltResponse.data.salt;
+          
+          if (!salt) {
+            console.error("Sel de déchiffrement non trouvé pour ce fichier");
+            alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
+            return;
+          }
+
+          // Déchiffrement du fichier avec le mot de passe et le sel
+          fileContent = await pbkdf2CryptoService.decryptData(
+            response.data,
+            salt
+          );
+        }
+
+        if (
+          fileType === "pdf" ||
+          fileType === "html" ||
+          fileType === "txt" ||
+          fileType === "md" ||
+          fileType === "csv" ||
+          fileType === "xml" ||
+          fileType === "json" ||
+          fileType === "svg" ||
+          fileType === "webp" ||
+          fileType === "ico" ||
+          fileType === "js" ||
+          fileType === "css" ||
+          ["png", "jpg", "jpeg", "gif", "mp3", "mp4", "webm", "wav", "ogg", "mov"].includes(fileType)
+        ) {
+          let type_blob;
+
+          if (fileType === "pdf") {
+            type_blob = "application/pdf";
+          }
+          else if (["png", "jpg", "jpeg", "gif", "svg", "webp", "ico"].includes(fileType)) {
+            type_blob = fileType === "svg" ? "image/svg+xml" :
+              fileType === "ico" ? "image/x-icon" :
+                `image/${fileType}`;
+          }
+          else if (fileType === "txt" || fileType === "md") {
+            // Pour les fichiers texte, on utilise TextDecoder pour les afficher
+            const decoder = new TextDecoder("utf-8");
+            const decodedText = decoder.decode(fileContent);
+            this.displayTextFile(decodedText, true);
+            return;
+          }
+          else if (fileType === "html") {
+            // Pour les fichiers HTML, on utilise TextDecoder et on les affiche dans la page de note
+            const decoder = new TextDecoder("utf-8");
+            const decodedText = decoder.decode(fileContent);
+            useTextContentStore().setTextContent(decodedText);
+            useTextContentStore().setFileNameWithoutExtension(fileName);
+            this.$router.push("/note");
+            return;
+          }
+          else if (fileType === "csv") {
+            type_blob = "text/csv";
+          }
+          else if (fileType === "xml") {
+            type_blob = "application/xml";
+          }
+          else if (fileType === "json") {
+            type_blob = "application/json";
+          }
+          else if (fileType === "js") {
+            type_blob = "application/javascript";
+          }
+          else if (fileType === "css") {
+            type_blob = "text/css";
+          }
+          else if (["mp3", "wav", "ogg"].includes(fileType)) {
+            type_blob = fileType === "mp3" ? "audio/mpeg" :
+              fileType === "wav" ? "audio/wav" :
+                "audio/ogg";
+          }
+          else if (["mp4", "webm", "mov"].includes(fileType)) {
+            type_blob = fileType === "mp4" ? "video/mp4" :
+              fileType === "webm" ? "video/webm" :
+                "video/quicktime";
+          }
+
+          const blob = new Blob([fileContent], { type: type_blob });
+          const url = window.URL.createObjectURL(blob);
+          const newTab = window.open(url, "_blank");
+
+          if (!newTab) {
+            console.error("Ouverture bloquée par le navigateur");
+            window.URL.revokeObjectURL(url);
+          }
+        } else {
+          console.error("Type de fichier non supporté :", fileType);
+        }
+      } catch (error) {
+        console.error("Erreur lors de l'ouverture du fichier:", error);
+        
+        // Si l'erreur est due à un mauvais mot de passe, demander à nouveau
+        if (error.message && error.message.includes("déchiffrement")) {
+          alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
+          pbkdf2CryptoService.clearUserPassword();
+        } else {
+          alert("Erreur lors de l'ouverture du fichier.");
+        }
+      }
     },
 
     getFileType(fileName) {
@@ -252,17 +363,17 @@ export default {
       return "";
     },
 
-    displayTextFile(textData) {
-      console.log("Displaying text file content:");
-      console.log(textData);
+    displayTextFile(textData, openInNewWindow = false) {
+      if (openInNewWindow) {
+        // Ouvrir le contenu dans une nouvelle fenêtre
+        const newTab = window.open();
+        newTab.document.write("<pre>" + textData + "</pre>");
+      }
     },
 
-    uploadFile() {
+    async uploadFile() {
       // Récupération du JWT Token
       const jwtToken = this.getJwtToken();
-
-      // Initialisation de FormData
-      const formData = new FormData();
 
       // Récupération du champ input file via sa référence 'fileInput'
       const fileInput = this.$refs.fileInput;
@@ -273,28 +384,56 @@ export default {
         return;
       }
 
+      const file = fileInput.files[0];
+      let fileToUpload;
+      let salt = null;
 
-      formData.append("file", fileInput.files[0]);
-      formData.append("category", this.folderName);
-      formData.append("isPublic", this.isPublic);
-      formData.append("userAddress", "user-address");
-      console.log("formData", formData);
+      try {
+        // Si le fichier n'est pas public, on le chiffre avant l'envoi
+        if (!this.isPublic) {
+          // Vérifier si l'utilisateur a défini son mot de passe
+          if (!pbkdf2CryptoService.hasUserPassword()) {
+            const password = await this.promptForPassword();
+            if (!password) {
+              alert("Mot de passe requis pour chiffrer le fichier.");
+              return;
+            }
+            pbkdf2CryptoService.setUserPassword(password);
+          }
+          
+          // Chiffrement du fichier avec PBKDF2
+          const encryptionResult = await pbkdf2CryptoService.encryptFile(file);
+          fileToUpload = encryptionResult.encryptedFile;
+          salt = encryptionResult.salt;
+        } else {
+          // Si le fichier est public, on l'envoie tel quel
+          fileToUpload = file;
+        }
 
-      axios
-        .post(`${BASE_URL}/api/Files/upload`, formData, {
+        // Initialisation de FormData
+        const formData = new FormData();
+        formData.append("file", fileToUpload, file.name); // On conserve le nom original du fichier
+        formData.append("category", this.folderName);
+        formData.append("isPublic", this.isPublic);
+        formData.append("userAddress", "user-address");
+        formData.append("salt", salt); // Ajout du sel pour les fichiers chiffrés
+
+        // Envoi du fichier au serveur
+        await axios.post(`${BASE_URL}/api/Files/upload`, formData, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
             "Content-Type": "multipart/form-data",
           },
-        })
-        .then(() => {
-          // Rafraîssement de la liste des fichiers une fois le fichier téléversé
-          this.loadFileList();
-          // Vide le champs de l'input
-          fileInput.value = "";
-        })
-        // En cas d'erreur, on l'affiche dans la console
-        .catch((error) => console.error(error));
+        });
+
+        // Rafraîssement de la liste des fichiers une fois le fichier téléversé
+        this.loadFileList();
+        // Vide le champs de l'input
+        fileInput.value = "";
+      } catch (error) {
+        console.error("Erreur lors de l'upload:", error);
+        alert("Erreur lors de l'envoi du fichier.");
+      }
     },
 
     getJwtToken() {
@@ -308,16 +447,35 @@ export default {
       return jwtToken;
     },
 
-    displayTextFile(textData, openInNewWindow = false) {
-      // Conversion en UTF-8 avec TextDecoder
-      const decoder = new TextDecoder("utf-8");
-      const decodedText = decoder.decode(textData);
+    // Vérifie si un fichier est public en cherchant dans la liste des fichiers
+    isFilePublic(fileName) {
+      const file = this.fileList.find(f => f.name === fileName);
+      return file ? file.isPublic : false;
+    },
 
-      if (openInNewWindow) {
-        // Ouvrir le contenu dans une nouvelle fenêtre
-        const newTab = window.open();
-        newTab.document.write("<pre>" + decodedText + "</pre>");
+    // Demande le mot de passe à l'utilisateur
+    async promptForPassword() {
+      // Vérifier d'abord si le mot de passe est stocké dans la session
+      const storedPassword = pbkdf2CryptoService.retrievePassword();
+      if (storedPassword) {
+        return storedPassword;
       }
+      
+      // Sinon, demander le mot de passe à l'utilisateur
+      return new Promise((resolve) => {
+        const password = prompt("Veuillez entrer votre mot de passe pour chiffrer/déchiffrer le fichier:");
+        
+        if (password) {
+          // Demander si l'utilisateur souhaite se souvenir du mot de passe pour cette session
+          const rememberPassword = confirm("Souhaitez-vous mémoriser ce mot de passe pour cette session?");
+          if (rememberPassword) {
+            pbkdf2CryptoService.setUserPassword(password);
+            pbkdf2CryptoService.rememberPassword(true);
+          }
+        }
+        
+        resolve(password);
+      });
     },
   },
 
@@ -330,6 +488,12 @@ export default {
   created() {
     this.folderName = this.$route.params.folderName;
     this.loadFileList();
+    
+    // Tenter de récupérer le mot de passe stocké dans la session
+    const storedPassword = pbkdf2CryptoService.retrievePassword();
+    if (storedPassword) {
+      pbkdf2CryptoService.setUserPassword(storedPassword);
+    }
   },
 };
 </script>

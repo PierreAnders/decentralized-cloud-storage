@@ -17,4 +17,5 @@ public class FileEntity
     public string Key { get; set; } = null!;
     public string IV { get; set; } = null!;
     public string Extension { get; set; } = null!;
+    public string Salt { get; set; } = null!;
 }
