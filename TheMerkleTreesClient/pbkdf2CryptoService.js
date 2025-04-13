@@ -1,63 +1,53 @@
-/**
- * Service de chiffrement basé sur mot de passe pour l'application décentralisée
- * Utilise PBKDF2 et Web Crypto API pour dériver des clés à partir du mot de passe utilisateur
- */
-
 class PBKDF2CryptoService {
   constructor() {
-    // Paramètres pour PBKDF2
-    this.iterations = 100000; // Nombre d'itérations pour PBKDF2
-    this.keyLength = 256; // Longueur de la clé en bits
-    this.ivLength = 16; // Longueur du vecteur d'initialisation en octets
-    this.saltLength = 16; // Longueur du sel en octets
-    
-    // Stockage temporaire du mot de passe en mémoire
+    this.iterations = 100000;
+    this.keyLength = 256;
+    this.ivLength = 12; // 12 octets est la taille recommandée pour AES-GCM
+    this.saltLength = 16;
     this.userPassword = null;
+    this.encryptionKey = null;
+    this.passwordExpiration = 30 * 60 * 1000; // 30 minutes en millisecondes
   }
 
-  /**
-   * Définit le mot de passe utilisateur pour la session
-   * @param {string} password - Mot de passe de l'utilisateur
-   */
+  // Gestion du mot de passe utilisateur
   setUserPassword(password) {
     this.userPassword = password;
+    this.passwordSetTime = Date.now();
   }
 
-  /**
-   * Efface le mot de passe de la mémoire
-   */
   clearUserPassword() {
     this.userPassword = null;
+    this.passwordSetTime = null;
   }
 
-  /**
-   * Vérifie si un mot de passe est défini
-   * @returns {boolean} Vrai si un mot de passe est défini
-   */
   hasUserPassword() {
-    return this.userPassword !== null && this.userPassword !== undefined;
+    // Vérifier si le mot de passe existe et n'a pas expiré
+    if (this.userPassword !== null && this.userPassword !== undefined) {
+      if (this.passwordSetTime && (Date.now() - this.passwordSetTime > this.passwordExpiration)) {
+        console.log("Mot de passe expiré, effacement automatique");
+        this.clearUserPassword();
+        return false;
+      }
+      return true;
+    }
+    return false;
   }
 
-  /**
-   * Génère un sel aléatoire
-   * @returns {Uint8Array} Sel aléatoire
-   */
+  // Génération de sel
   generateSalt() {
     return window.crypto.getRandomValues(new Uint8Array(this.saltLength));
   }
 
-  /**
-   * Dérive une clé et un IV à partir du mot de passe et du sel
-   * @param {string} password - Mot de passe utilisateur
-   * @param {Uint8Array} salt - Sel pour la dérivation
-   * @returns {Promise<{key: CryptoKey, iv: Uint8Array}>} Clé et IV dérivés
-   */
-  async deriveKeyAndIV(password, salt) {
-    // Convertir le mot de passe en ArrayBuffer
+  // Génération d'IV aléatoire
+  generateIV() {
+    return window.crypto.getRandomValues(new Uint8Array(this.ivLength));
+  }
+
+  // Dérivation de clé
+  async deriveKey(password, salt) {
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
-    
-    // Dériver une clé intermédiaire avec PBKDF2
+
     const baseKey = await window.crypto.subtle.importKey(
       "raw",
       passwordBuffer,
@@ -65,8 +55,7 @@ class PBKDF2CryptoService {
       false,
       ["deriveBits", "deriveKey"]
     );
-    
-    // Dériver la clé AES
+
     const key = await window.crypto.subtle.deriveKey(
       {
         name: "PBKDF2",
@@ -76,144 +65,263 @@ class PBKDF2CryptoService {
       },
       baseKey,
       {
-        name: "AES-CBC",
+        name: "AES-GCM",
         length: this.keyLength
       },
-      true, // extractable
+      true,
       ["encrypt", "decrypt"]
     );
-    
-    // Dériver l'IV (en utilisant une partie différente du sel)
-    const ivSalt = new Uint8Array(salt);
-    // Modifier légèrement le sel pour l'IV pour éviter de réutiliser exactement le même sel
-    for (let i = 0; i < ivSalt.length; i++) {
-      ivSalt[i] = (ivSalt[i] + 1) % 256;
-    }
-    
-    const ivBits = await window.crypto.subtle.deriveBits(
-      {
-        name: "PBKDF2",
-        salt: ivSalt,
-        iterations: this.iterations / 10, // Moins d'itérations pour l'IV
-        hash: "SHA-256"
-      },
-      baseKey,
-      this.ivLength * 8 // Longueur en bits
-    );
-    
-    const iv = new Uint8Array(ivBits).slice(0, this.ivLength);
-    
-    return { key, iv };
+
+    return key;
   }
 
-  /**
-   * Chiffre un fichier avec une clé dérivée du mot de passe
-   * @param {File} file - Le fichier à chiffrer
-   * @returns {Promise<{encryptedFile: Blob, salt: string}>} Fichier chiffré et sel encodé en Base64
-   */
+  // Chiffrement de fichier
   async encryptFile(file) {
     if (!this.hasUserPassword()) {
-      throw new Error("Mot de passe utilisateur non défini");
+      throw new Error("Mot de passe utilisateur non défini ou expiré");
     }
-    
+
     try {
-      // Génération d'un sel aléatoire
       const salt = this.generateSalt();
-      
-      // Dérivation de la clé et de l'IV à partir du mot de passe et du sel
-      const { key, iv } = await this.deriveKeyAndIV(this.userPassword, salt);
-      
-      // Lecture du fichier en ArrayBuffer
+      const key = await this.deriveKey(this.userPassword, salt);
+      const iv = this.generateIV();
       const fileBuffer = await this._readFileAsArrayBuffer(file);
       
-      // Chiffrement du fichier
       const encryptedBuffer = await window.crypto.subtle.encrypt(
         {
-          name: "AES-CBC",
-          iv
+          name: "AES-GCM",
+          iv,
+          tagLength: 128 // Taille du tag d'authentification en bits
         },
         key,
         fileBuffer
       );
       
-      // Conversion en Blob pour l'envoi
+      // Créer un blob avec le fichier chiffré
       const encryptedFile = new Blob([encryptedBuffer], { type: 'application/octet-stream' });
       
-      // Conversion du sel en Base64 pour stockage
+      // Convertir le sel et l'IV en Base64 pour le stockage
       const saltBase64 = this._arrayBufferToBase64(salt);
+      const ivBase64 = this._arrayBufferToBase64(iv);
       
-      return { encryptedFile, salt: saltBase64 };
+      return { 
+        encryptedFile, 
+        salt: saltBase64, 
+        iv: ivBase64 
+      };
     } catch (error) {
       console.error("Erreur lors du chiffrement:", error);
-      throw error;
+      throw new Error(`Échec du chiffrement: ${error.message}`);
     }
   }
 
-  /**
-   * Déchiffre des données avec une clé dérivée du mot de passe
-   * @param {ArrayBuffer} encryptedData - Les données chiffrées
-   * @param {string} saltBase64 - Le sel encodé en Base64
-   * @returns {Promise<ArrayBuffer>} Les données déchiffrées
-   */
-  async decryptData(encryptedData, saltBase64) {
+  // Déchiffrement de données
+  async decryptData(encryptedData, saltBase64, ivBase64) {
     if (!this.hasUserPassword()) {
-      throw new Error("Mot de passe utilisateur non défini");
+      throw new Error("Mot de passe utilisateur non défini ou expiré");
     }
-    
+
     try {
-      // Conversion du sel depuis Base64
       const salt = this._base64ToArrayBuffer(saltBase64);
+      const iv = ivBase64 ? this._base64ToArrayBuffer(ivBase64) : this._deriveIVFromSalt(salt); // Compatibilité avec l'ancien format
+      const key = await this.deriveKey(this.userPassword, salt);
       
-      // Dérivation de la clé et de l'IV à partir du mot de passe et du sel
-      const { key, iv } = await this.deriveKeyAndIV(this.userPassword, salt);
-      
-      // Déchiffrement des données
       const decryptedBuffer = await window.crypto.subtle.decrypt(
         {
-          name: "AES-CBC",
-          iv
+          name: "AES-GCM",
+          iv,
+          tagLength: 128 // Taille du tag d'authentification en bits
         },
         key,
-        encryptedData
+        encryptedData instanceof ArrayBuffer ? encryptedData : new Uint8Array(encryptedData)
       );
       
       return decryptedBuffer;
     } catch (error) {
       console.error("Erreur lors du déchiffrement:", error);
-      throw error;
+      if (error.name === "OperationError") {
+        throw new Error("Échec du déchiffrement: le mot de passe est peut-être incorrect ou les données sont corrompues");
+      }
+      throw new Error(`Échec du déchiffrement: ${error.message}`);
     }
   }
 
-  /**
-   * Stocke le mot de passe dans sessionStorage (optionnel)
-   * @param {boolean} rememberPassword - Si vrai, stocke le mot de passe chiffré
-   */
-  rememberPassword(rememberPassword) {
+  // Méthode de compatibilité pour l'ancien format (à supprimer après migration)
+  _deriveIVFromSalt(salt) {
+    console.warn("Utilisation de l'ancienne méthode de dérivation d'IV (compatibilité)");
+    const ivSalt = new Uint8Array(salt);
+    for (let i = 0; i < ivSalt.length; i++) {
+      ivSalt[i] = (ivSalt[i] + 1) % 256;
+    }
+    return ivSalt.slice(0, this.ivLength);
+  }
+
+  // Gestion de la clé de chiffrement principale
+  async importEncryptionKeyFromJwk(jwk) {
+    try {
+      this.encryptionKey = await window.crypto.subtle.importKey(
+        "jwk",
+        jwk,
+        { 
+          name: "AES-GCM",
+          length: 256
+        },
+        false,
+        ["encrypt", "decrypt"]
+      );
+      return this.encryptionKey;
+    } catch (error) {
+      console.error("Erreur lors de l'importation de la clé JWK:", error);
+      throw new Error(`Échec de l'importation de la clé: ${error.message}`);
+    }
+  }
+
+  async importEncryptionKeyFromBase64(base64Key) {
+    try {
+      const keyBytes = this._base64ToArrayBuffer(base64Key);
+      this.encryptionKey = await window.crypto.subtle.importKey(
+        "raw",
+        keyBytes,
+        { 
+          name: "AES-GCM",
+          length: 256
+        },
+        false,
+        ["encrypt", "decrypt"]
+      );
+      return this.encryptionKey;
+    } catch (error) {
+      console.error("Erreur lors de l'importation de la clé Base64:", error);
+      throw new Error(`Échec de l'importation de la clé: ${error.message}`);
+    }
+  }
+
+  async generateEncryptionKey() {
+    try {
+      this.encryptionKey = await window.crypto.subtle.generateKey(
+        {
+          name: "AES-GCM",
+          length: 256
+        },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      return this.encryptionKey;
+    } catch (error) {
+      console.error("Erreur lors de la génération de la clé:", error);
+      throw new Error(`Échec de la génération de la clé: ${error.message}`);
+    }
+  }
+
+  async ensureEncryptionKey() {
+    if (!this.encryptionKey) {
+      await this.generateEncryptionKey();
+    }
+    return this.encryptionKey;
+  }
+
+  // Chiffrement du mot de passe pour stockage temporaire
+  async encryptPassword(password, encryptionKey) {
+    try {
+      const encoder = new TextEncoder();
+      const passwordBuffer = encoder.encode(password);
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      
+      const encryptedBuffer = await window.crypto.subtle.encrypt(
+        {
+          name: "AES-GCM",
+          iv,
+          tagLength: 128
+        },
+        encryptionKey,
+        passwordBuffer
+      );
+      
+      const encryptedPassword = this._arrayBufferToBase64(encryptedBuffer);
+      const ivBase64 = this._arrayBufferToBase64(iv);
+      const timestamp = Date.now().toString();
+      return `${encryptedPassword}:${ivBase64}:${timestamp}`;
+    } catch (error) {
+      console.error("Erreur lors du chiffrement du mot de passe:", error);
+      throw new Error(`Échec du chiffrement du mot de passe: ${error.message}`);
+    }
+  }
+
+  // Déchiffrement du mot de passe
+  async decryptPassword(encryptedPasswordData, encryptionKey) {
+    try {
+      const parts = encryptedPasswordData.split(':');
+      if (parts.length < 2) {
+        throw new Error("Format de mot de passe chiffré invalide");
+      }
+      
+      const encryptedPasswordBase64 = parts[0];
+      const ivBase64 = parts[1];
+      const timestamp = parts.length > 2 ? parseInt(parts[2]) : null;
+      
+      // Vérifier l'expiration si un timestamp est présent
+      if (timestamp && (Date.now() - timestamp > this.passwordExpiration)) {
+        throw new Error("Le mot de passe stocké a expiré");
+      }
+      
+      const encryptedBuffer = this._base64ToArrayBuffer(encryptedPasswordBase64);
+      const iv = this._base64ToArrayBuffer(ivBase64);
+      
+      const decryptedBuffer = await window.crypto.subtle.decrypt(
+        {
+          name: "AES-GCM",
+          iv,
+          tagLength: 128
+        },
+        encryptionKey,
+        encryptedBuffer
+      );
+      
+      const decoder = new TextDecoder();
+      return decoder.decode(decryptedBuffer);
+    } catch (error) {
+      console.error("Erreur lors du déchiffrement du mot de passe:", error);
+      sessionStorage.removeItem('userPassword'); // Supprimer le mot de passe en cas d'erreur
+      throw new Error("Impossible de récupérer le mot de passe stocké");
+    }
+  }
+
+  // Mémorisation du mot de passe
+  async rememberPassword(rememberPassword) {
     if (!this.hasUserPassword()) return;
-    
-    if (rememberPassword) {
-      // Stockage simple pour la démonstration - dans une implémentation réelle,
-      // il faudrait chiffrer le mot de passe avant de le stocker
-      sessionStorage.setItem('userPassword', this.userPassword);
-    } else {
-      sessionStorage.removeItem('userPassword');
+
+    try {
+      await this.ensureEncryptionKey();
+      
+      if (rememberPassword) {
+        const encryptedPassword = await this.encryptPassword(this.userPassword, this.encryptionKey);
+        sessionStorage.setItem('userPassword', encryptedPassword);
+        console.log("Mot de passe utilisateur enregistré dans sessionStorage (expirera dans 30 minutes)");
+      } else {
+        sessionStorage.removeItem('userPassword');
+      }
+    } catch (error) {
+      console.error("Erreur lors de la mémorisation du mot de passe:", error);
+      sessionStorage.removeItem('userPassword'); // Par sécurité
     }
   }
 
-  /**
-   * Récupère le mot de passe depuis sessionStorage (si disponible)
-   * @returns {string|null} Le mot de passe stocké ou null
-   */
-  retrievePassword() {
-    return sessionStorage.getItem('userPassword');
+  // Récupération du mot de passe
+  async retrievePassword() {
+    try {
+      const encryptedPassword = sessionStorage.getItem('userPassword');
+      if (!encryptedPassword) return null;
+      
+      await this.ensureEncryptionKey();
+      return await this.decryptPassword(encryptedPassword, this.encryptionKey);
+    } catch (error) {
+      console.error("Erreur lors de la récupération du mot de passe:", error);
+      sessionStorage.removeItem('userPassword'); // Supprimer en cas d'erreur
+      return null;
+    }
   }
 
-  /**
-   * Convertit un ArrayBuffer en chaîne Base64
-   * @private
-   * @param {ArrayBuffer|Uint8Array} buffer - Le buffer à convertir
-   * @returns {string} La chaîne Base64
-   */
+  // Méthodes utilitaires
   _arrayBufferToBase64(buffer) {
     const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
     let binary = '';
@@ -223,12 +331,6 @@ class PBKDF2CryptoService {
     return window.btoa(binary);
   }
 
-  /**
-   * Convertit une chaîne Base64 en ArrayBuffer
-   * @private
-   * @param {string} base64 - La chaîne Base64 à convertir
-   * @returns {ArrayBuffer} Le buffer résultant
-   */
   _base64ToArrayBuffer(base64) {
     const binaryString = window.atob(base64);
     const bytes = new Uint8Array(binaryString.length);
@@ -238,12 +340,6 @@ class PBKDF2CryptoService {
     return bytes.buffer;
   }
 
-  /**
-   * Lit un fichier en tant qu'ArrayBuffer
-   * @private
-   * @param {File} file - Le fichier à lire
-   * @returns {Promise<ArrayBuffer>} Le contenu du fichier
-   */
   _readFileAsArrayBuffer(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -254,5 +350,4 @@ class PBKDF2CryptoService {
   }
 }
 
-// Export du service pour utilisation dans les composants Vue
 export default new PBKDF2CryptoService();

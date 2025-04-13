@@ -3,12 +3,59 @@
     <BurgerMenu />
     <div class="flex items-center justify-center pt-8">
       <h1 class="pr-3 tracking-wider text-light-gray">
-        {{ folderName.toUpperCase() }}
+        {{ currentFolder ? currentFolder.name.toUpperCase() : 'RACINE' }}
       </h1>
       <IconFolder />
     </div>
-    <ul class="flex flex-col w-3/4 mx-auto mt-12 mb-8 md:w-2/3 lg:w-1/2">
-      <li v-for="file in fileList" :key="file.id" class="flex flex-col justify-between mt-6 text-white md:flex-row">
+
+    <!-- Chemin de navigation (breadcrumb) -->
+    <div class="flex items-center justify-center mt-4 text-sm text-light-gray">
+      <span 
+        @click="navigateToRoot" 
+        class="cursor-pointer hover:text-white"
+      >
+        Racine
+      </span>
+      <span v-for="(folder, index) in breadcrumb" :key="folder.id" class="flex items-center">
+        <span class="mx-2">/</span>
+        <span 
+          @click="navigateToFolder(folder.id)" 
+          class="cursor-pointer hover:text-white"
+        >
+          {{ folder.name }}
+        </span>
+      </span>
+    </div>
+
+    <!-- Liste des sous-dossiers -->
+    <div v-if="subfolders.length > 0" class="w-3/4 mx-auto mt-8 md:w-2/3 lg:w-1/2">
+      <h2 class="mb-4 text-sm text-light-gray">Dossiers</h2>
+      <ul class="flex flex-col">
+        <li v-for="folder in subfolders" :key="folder.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
+          <div class="flex justify-between w-full">
+            <div class="flex items-center space-x-2 cursor-pointer" @click="navigateToFolder(folder.id)">
+              <IconFolder :color="'#828282'" iclass="opacity-50" />
+              <span class="text-sm">{{ folder.name }}</span>
+            </div>
+            <div class="flex items-center space-x-2">
+              <button @click="showRenameFolder(folder)">
+                <IconEdit :color="'#553348'"
+                  class="w-5 h-5 transition-transform transform md:w-6 md:h-6 hover:scale-110" />
+              </button>
+              <button @click="deleteFolder(folder.id)">
+                <IconSubmenuDeleteFolder :color="'#553348'"
+                  class="w-5 h-5 transition-transform transform md:w-6 md:h-6 hover:scale-110" />
+              </button>
+            </div>
+          </div>
+        </li>
+      </ul>
+    </div>
+
+    <!-- Liste des fichiers -->
+    <ul class="flex flex-col w-3/4 mx-auto mt-8 mb-8 md:w-2/3 lg:w-1/2">
+      <h2 class="mb-4 text-sm text-light-gray">Fichiers</h2>
+      <li v-for="file in fileList" :key="file.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
         <div class="flex justify-between w-full">
           <div class="flex items-center space-x-2">
             <IconDocument :color="'#828282'" iclass="opacity-50" />
@@ -29,7 +76,10 @@
         </div>
       </li>
     </ul>
-    <div class="flex justify-center">
+
+    <!-- Actions -->
+    <div class="flex justify-center space-x-8">
+      <!-- Ajouter un fichier -->
       <div class="flex flex-col justify-center">
         <label for="fileInput" class="text-light-gray">
           <div id="fileNameLabel" class="flex flex-col justify-center cursor-pointer text-light-gray">
@@ -48,6 +98,43 @@
           </div>
         </div>
       </div>
+
+      <!-- Créer un dossier -->
+      <div class="flex flex-col justify-center">
+        <div class="flex flex-col justify-center cursor-pointer text-light-gray" @click="showCreateFolder">
+          <IconNewFolder class="pb-2 mx-auto transition-transform transform w-14 hover:scale-110" />
+        </div>
+        <div class="flex flex-col items-center">
+          <h2 class="text-light-gray text-sm">Créer un dossier</h2>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal pour créer/renommer un dossier -->
+    <div v-if="showFolderModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div class="p-6 bg-dark-gray rounded-lg shadow-lg">
+        <h2 class="mb-4 text-xl text-white">{{ editingFolder ? 'Renommer le dossier' : 'Créer un dossier' }}</h2>
+        <input 
+          v-model="folderName" 
+          class="w-full p-2 mb-4 text-white bg-black border border-gray-700 rounded"
+          placeholder="Nom du dossier"
+          @keyup.enter="editingFolder ? updateFolder() : createFolder()"
+        />
+        <div class="flex justify-between">
+          <button 
+            @click="closeFolderModal" 
+            class="px-4 py-2 text-white bg-gray-700 rounded hover:bg-gray-600"
+          >
+            Annuler
+          </button>
+          <button 
+            @click="editingFolder ? updateFolder() : createFolder()" 
+            class="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-500"
+          >
+            {{ editingFolder ? 'Renommer' : 'Créer' }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -55,24 +142,101 @@
 <script>
 import axios from "axios";
 import { useTextContentStore } from "../../textContentStore.js";
-import pbkdf2CryptoService from "../../pbkdf2CryptoService.js"; // Import du service de chiffrement PBKDF2
+import pbkdf2CryptoService from "../../pbkdf2CryptoService.js";
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
 export default {
   data() {
     return {
       fileList: [],
-      folderName: "",
+      subfolders: [],
+      breadcrumb: [],
+      currentFolder: null,
+      currentFolderId: null,
       isPublic: false,
+      showFolderModal: false,
+      folderName: "",
+      editingFolder: null,
     };
   },
+  mounted() {
+    // Récupérer l'ID du dossier depuis l'URL si présent
+    const folderId = this.$route.query.folderId;
+    if (folderId) {
+      this.currentFolderId = folderId;
+      this.loadFolder(folderId);
+    } else {
+      this.loadRootContent();
+    }
+  },
   methods: {
-    loadFileList() {
+    loadRootContent() {
+      this.currentFolder = null;
+      this.currentFolderId = null;
+      this.breadcrumb = [];
+      this.loadFileList();
+      this.loadSubfolders();
+    },
+    loadFolder(folderId) {
       if (process.client) {
         const jwtToken = this.getJwtToken();
 
         axios
-          .get(`${BASE_URL}/api/Files/user/category/${this.folderName}`, {
+          .get(`${BASE_URL}/api/Folders/${folderId}`, {
+            headers: {
+              Authorization: `Bearer ${jwtToken}`,
+              "Content-Type": "application/json",
+            },
+          })
+          .then((response) => {
+            this.currentFolder = response.data;
+            this.currentFolderId = folderId;
+            this.loadBreadcrumb(this.currentFolder);
+            this.loadFileList();
+            this.loadSubfolders();
+          })
+          .catch((error) => {
+            console.error("Erreur lors du chargement du dossier:", error);
+            this.loadRootContent(); // Retour à la racine en cas d'erreur
+          });
+      }
+    },
+    loadBreadcrumb(folder) {
+      this.breadcrumb = [];
+      this.buildBreadcrumb(folder);
+    },
+    buildBreadcrumb(folder) {
+      if (!folder || !folder.parentId) {
+        return;
+      }
+
+      const jwtToken = this.getJwtToken();
+      
+      axios
+        .get(`${BASE_URL}/api/Folders/${folder.parentId}`, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          },
+        })
+        .then((response) => {
+          const parentFolder = response.data;
+          this.breadcrumb.unshift(parentFolder);
+          this.buildBreadcrumb(parentFolder);
+        })
+        .catch((error) => {
+          console.error("Erreur lors du chargement du chemin de navigation:", error);
+        });
+    },
+    loadFileList() {
+      if (process.client) {
+        const jwtToken = this.getJwtToken();
+        const endpoint = this.currentFolderId 
+          ? `${BASE_URL}/api/Files/folder/${this.currentFolderId}`
+          : `${BASE_URL}/api/Files/user`;
+
+        axios
+          .get(endpoint, {
             headers: {
               Authorization: `Bearer ${jwtToken}`,
               "Content-Type": "application/json",
@@ -88,7 +252,135 @@ export default {
         );
       }
     },
+    loadSubfolders() {
+      if (process.client) {
+        const jwtToken = this.getJwtToken();
+        const endpoint = this.currentFolderId 
+          ? `${BASE_URL}/api/Folders/${this.currentFolderId}/subfolders`
+          : `${BASE_URL}/api/Folders/root`;
 
+        axios
+          .get(endpoint, {
+            headers: {
+              Authorization: `Bearer ${jwtToken}`,
+              "Content-Type": "application/json",
+            },
+          })
+          .then((response) => {
+            this.subfolders = response.data;
+          })
+          .catch((error) => console.error("Erreur lors du chargement des sous-dossiers:", error));
+      }
+    },
+    navigateToRoot() {
+      this.loadRootContent();
+      this.$router.push({ query: {} });
+    },
+    navigateToFolder(folderId) {
+      this.loadFolder(folderId);
+      this.$router.push({ query: { folderId } });
+    },
+    showCreateFolder() {
+      this.editingFolder = null;
+      this.folderName = "";
+      this.showFolderModal = true;
+    },
+    showRenameFolder(folder) {
+      this.editingFolder = folder;
+      this.folderName = folder.name;
+      this.showFolderModal = true;
+    },
+    closeFolderModal() {
+      this.showFolderModal = false;
+      this.folderName = "";
+      this.editingFolder = null;
+    },
+    createFolder() {
+      if (!this.folderName.trim()) {
+        alert("Veuillez entrer un nom de dossier");
+        return;
+      }
+
+      const jwtToken = this.getJwtToken();
+      
+      const newFolder = {
+        id: "test",
+        name: this.folderName.trim(),
+        parentId: this.currentFolderId,
+        isPublic: false,
+        owner: "test",
+
+      };
+      console.log(newFolder);
+
+      axios
+        .post(`${BASE_URL}/api/Folders`, newFolder, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          },
+        })
+        .then(() => {
+          this.loadSubfolders();
+          this.closeFolderModal();
+        })
+        .catch((error) => {
+          console.error("Erreur lors de la création du dossier:", error);
+          alert("Erreur lors de la création du dossier");
+        });
+    },
+    updateFolder() {
+      if (!this.folderName.trim()) {
+        alert("Veuillez entrer un nom de dossier");
+        return;
+      }
+
+      const jwtToken = this.getJwtToken();
+      
+      const updateData = {
+        name: this.folderName.trim(),
+        parentId: this.editingFolder.parentId,
+        isPublic: this.editingFolder.isPublic
+      };
+
+      axios
+        .put(`${BASE_URL}/api/Folders/${this.editingFolder.id}`, updateData, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          },
+        })
+        .then(() => {
+          this.loadSubfolders();
+          this.closeFolderModal();
+        })
+        .catch((error) => {
+          console.error("Erreur lors de la mise à jour du dossier:", error);
+          alert("Erreur lors de la mise à jour du dossier");
+        });
+    },
+    deleteFolder(folderId) {
+      if (!confirm("Êtes-vous sûr de vouloir supprimer ce dossier et tout son contenu ?")) {
+        return;
+      }
+
+      const jwtToken = this.getJwtToken();
+
+      axios
+        .delete(`${BASE_URL}/api/Folders/${folderId}`, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          },
+        })
+        .then(() => {
+          this.loadSubfolders();
+        })
+        .catch((error) => {
+          console.error("Erreur lors de la suppression du dossier:", error);
+          alert("Erreur lors de la suppression du dossier");
+        });
+    },
     deleteFile(fileName) {
       const jwtToken = this.getJwtToken();
 
@@ -104,12 +396,10 @@ export default {
         })
         .catch((error) => console.error(error));
     },
-
     async downloadFile(fileName) {
       try {
         const jwtToken = this.getJwtToken();
 
-        // Vérifier si l'utilisateur a défini son mot de passe
         if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
           const password = await this.promptForPassword();
           if (!password) {
@@ -126,22 +416,20 @@ export default {
           responseType: "arraybuffer",
         };
 
-        // Récupération du fichier chiffré
         const response = await axios.get(
           `${BASE_URL}/api/Files/file/${fileName}`,
           axiosConfig
         );
 
-        // Si le fichier est public, pas besoin de déchiffrement
         if (this.isFilePublic(fileName)) {
           const blob = new Blob([response.data]);
           this.saveBlob(blob, fileName);
           return;
         }
 
-        // Récupération du sel associé au fichier
-        const saltResponse = await axios.get(
-          `${BASE_URL}/api/Files/salt/${fileName}`,
+        // Récupérer les paramètres cryptographiques (sel et IV)
+        const cryptoParamsResponse = await axios.get(
+          `${BASE_URL}/api/Files/crypto-params/${fileName}`,
           {
             headers: {
               Authorization: `Bearer ${jwtToken}`,
@@ -149,27 +437,26 @@ export default {
           }
         );
 
-        const salt = saltResponse.data.salt;
-        
+        const salt = cryptoParamsResponse.data.salt;
+        const iv = cryptoParamsResponse.data.iv;
+
         if (!salt) {
           console.error("Sel de déchiffrement non trouvé pour ce fichier");
           alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
           return;
         }
 
-        // Déchiffrement du fichier avec le mot de passe et le sel
         const fileContent = await pbkdf2CryptoService.decryptData(
           response.data,
-          salt
+          salt,
+          iv
         );
 
-        // Création d'un blob à partir des données déchiffrées
         const blob = new Blob([fileContent]);
         this.saveBlob(blob, fileName);
       } catch (error) {
         console.error("Erreur lors du téléchargement:", error);
-        
-        // Si l'erreur est due à un mauvais mot de passe, demander à nouveau
+
         if (error.message && error.message.includes("déchiffrement")) {
           alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
           pbkdf2CryptoService.clearUserPassword();
@@ -178,38 +465,21 @@ export default {
         }
       }
     },
-
-    // Fonction utilitaire pour sauvegarder un blob en tant que fichier
     saveBlob(blob, fileName) {
-      // Création d'une URL pour le blob
       const url = window.URL.createObjectURL(blob);
-
-      // Création d'un lien pointant vers le blob
       const link = document.createElement("a");
       link.href = url;
-
-      // Ajout de l'attribut 'download' au lien, avec le nom du fichier original
       link.setAttribute("download", fileName);
-
-      // Ajout du lien au corps de la page HTML
       document.body.appendChild(link);
-
-      // Déclenchement du clic sur le lien, ce qui lance le téléchargement du fichier
       link.click();
-
-      // Suppression du lien du corps de la page
       link.remove();
-
-      // Suppression de l'URL créée pour le blob, pour libérer les ressources
       window.URL.revokeObjectURL(url);
     },
-
     async openFile(fileName) {
       try {
         const jwtToken = this.getJwtToken();
         const fileType = this.getFileType(fileName);
-        
-        // Vérifier si l'utilisateur a défini son mot de passe
+
         if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
           const password = await this.promptForPassword();
           if (!password) {
@@ -218,27 +488,25 @@ export default {
           }
           pbkdf2CryptoService.setUserPassword(password);
         }
-        
+
         const axiosConfig = {
           headers: { Authorization: `Bearer ${jwtToken}` },
           responseType: "arraybuffer",
         };
 
-        // Récupération du fichier chiffré
         const response = await axios.get(
           `${BASE_URL}/api/Files/file/${fileName}`,
           axiosConfig
         );
 
         let fileContent;
-        
-        // Si le fichier est public, pas besoin de déchiffrement
+
         if (this.isFilePublic(fileName)) {
           fileContent = response.data;
         } else {
-          // Récupération du sel associé au fichier
-          const saltResponse = await axios.get(
-            `${BASE_URL}/api/Files/salt/${fileName}`,
+          // Récupérer les paramètres cryptographiques (sel et IV)
+          const cryptoParamsResponse = await axios.get(
+            `${BASE_URL}/api/Files/crypto-params/${fileName}`,
             {
               headers: {
                 Authorization: `Bearer ${jwtToken}`,
@@ -246,18 +514,19 @@ export default {
             }
           );
 
-          const salt = saltResponse.data.salt;
-          
+          const salt = cryptoParamsResponse.data.salt;
+          const iv = cryptoParamsResponse.data.iv;
+
           if (!salt) {
             console.error("Sel de déchiffrement non trouvé pour ce fichier");
             alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
             return;
           }
 
-          // Déchiffrement du fichier avec le mot de passe et le sel
           fileContent = await pbkdf2CryptoService.decryptData(
             response.data,
-            salt
+            salt,
+            iv
           );
         }
 
@@ -287,14 +556,12 @@ export default {
                 `image/${fileType}`;
           }
           else if (fileType === "txt" || fileType === "md") {
-            // Pour les fichiers texte, on utilise TextDecoder pour les afficher
             const decoder = new TextDecoder("utf-8");
             const decodedText = decoder.decode(fileContent);
             this.displayTextFile(decodedText, true);
             return;
           }
           else if (fileType === "html") {
-            // Pour les fichiers HTML, on utilise TextDecoder et on les affiche dans la page de note
             const decoder = new TextDecoder("utf-8");
             const decodedText = decoder.decode(fileContent);
             useTextContentStore().setTextContent(decodedText);
@@ -341,8 +608,7 @@ export default {
         }
       } catch (error) {
         console.error("Erreur lors de l'ouverture du fichier:", error);
-        
-        // Si l'erreur est due à un mauvais mot de passe, demander à nouveau
+
         if (error.message && error.message.includes("déchiffrement")) {
           alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
           pbkdf2CryptoService.clearUserPassword();
@@ -351,34 +617,23 @@ export default {
         }
       }
     },
-
     getFileType(fileName) {
-      // Extraire l'extension du fichier
       const parts = fileName.split(".");
-
-      // Vérification si le fichier a plusieurs extension et retourne la dernière
       if (parts.length > 1) {
         return parts[parts.length - 1].toLowerCase();
       }
       return "";
     },
-
     displayTextFile(textData, openInNewWindow = false) {
       if (openInNewWindow) {
-        // Ouvrir le contenu dans une nouvelle fenêtre
         const newTab = window.open();
         newTab.document.write("<pre>" + textData + "</pre>");
       }
     },
-
     async uploadFile() {
-      // Récupération du JWT Token
       const jwtToken = this.getJwtToken();
-
-      // Récupération du champ input file via sa référence 'fileInput'
       const fileInput = this.$refs.fileInput;
 
-      // Si aucun fichier n'est sélectionné, on affiche une erreur et on quitte la fonction
       if (fileInput.files.length === 0) {
         console.error("Aucun fichier sélectionné.");
         return;
@@ -387,11 +642,10 @@ export default {
       const file = fileInput.files[0];
       let fileToUpload;
       let salt = null;
+      let iv = null;
 
       try {
-        // Si le fichier n'est pas public, on le chiffre avant l'envoi
         if (!this.isPublic) {
-          // Vérifier si l'utilisateur a défini son mot de passe
           if (!pbkdf2CryptoService.hasUserPassword()) {
             const password = await this.promptForPassword();
             if (!password) {
@@ -400,25 +654,28 @@ export default {
             }
             pbkdf2CryptoService.setUserPassword(password);
           }
-          
-          // Chiffrement du fichier avec PBKDF2
+
           const encryptionResult = await pbkdf2CryptoService.encryptFile(file);
           fileToUpload = encryptionResult.encryptedFile;
           salt = encryptionResult.salt;
+          iv = encryptionResult.iv;
         } else {
-          // Si le fichier est public, on l'envoie tel quel
           fileToUpload = file;
         }
 
-        // Initialisation de FormData
         const formData = new FormData();
-        formData.append("file", fileToUpload, file.name); // On conserve le nom original du fichier
-        formData.append("category", this.folderName);
+        formData.append("file", fileToUpload, file.name);
+        formData.append("category", "files"); // Catégorie par défaut
         formData.append("isPublic", this.isPublic);
         formData.append("userAddress", "user-address");
-        formData.append("salt", salt); // Ajout du sel pour les fichiers chiffrés
+        formData.append("salt", salt);
+        formData.append("iv", iv);
+        
+        // Ajouter l'ID du dossier si on est dans un dossier
+        if (this.currentFolderId) {
+          formData.append("folderId", this.currentFolderId);
+        }
 
-        // Envoi du fichier au serveur
         await axios.post(`${BASE_URL}/api/Files/upload`, formData, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
@@ -426,16 +683,13 @@ export default {
           },
         });
 
-        // Rafraîssement de la liste des fichiers une fois le fichier téléversé
         this.loadFileList();
-        // Vide le champs de l'input
         fileInput.value = "";
       } catch (error) {
         console.error("Erreur lors de l'upload:", error);
         alert("Erreur lors de l'envoi du fichier.");
       }
     },
-
     getJwtToken() {
       const jwtToken = localStorage.getItem("access_token");
 
@@ -446,53 +700,29 @@ export default {
       }
       return jwtToken;
     },
-
-    // Vérifie si un fichier est public en cherchant dans la liste des fichiers
     isFilePublic(fileName) {
       const file = this.fileList.find(f => f.name === fileName);
       return file ? file.isPublic : false;
     },
-
-    // Demande le mot de passe à l'utilisateur
     async promptForPassword() {
-      // Vérifier d'abord si le mot de passe est stocké dans la session
-      const storedPassword = pbkdf2CryptoService.retrievePassword();
+      const storedPassword = await pbkdf2CryptoService.retrievePassword();
       if (storedPassword) {
         return storedPassword;
       }
-      
-      // Sinon, demander le mot de passe à l'utilisateur
+
       return new Promise((resolve) => {
         const password = prompt("Veuillez entrer votre mot de passe pour chiffrer/déchiffrer le fichier:");
-        
+
         if (password) {
-          // Demander si l'utilisateur souhaite se souvenir du mot de passe pour cette session
           const rememberPassword = confirm("Souhaitez-vous mémoriser ce mot de passe pour cette session?");
           if (rememberPassword) {
             pbkdf2CryptoService.setUserPassword(password);
             pbkdf2CryptoService.rememberPassword(true);
           }
         }
-        
+
         resolve(password);
       });
-    },
-  },
-
-  setup() {
-    definePageMeta({
-      middleware: ["auth"],
-    });
-  },
-
-  created() {
-    this.folderName = this.$route.params.folderName;
-    this.loadFileList();
-    
-    // Tenter de récupérer le mot de passe stocké dans la session
-    const storedPassword = pbkdf2CryptoService.retrievePassword();
-    if (storedPassword) {
-      pbkdf2CryptoService.setUserPassword(storedPassword);
     }
   },
 };

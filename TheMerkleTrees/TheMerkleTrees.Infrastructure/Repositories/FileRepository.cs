@@ -2,6 +2,7 @@
 using MongoDB.Driver;
 using TheMerkleTrees.Domain.Interfaces.Repositories;
 using TheMerkleTrees.Infrastructure.Configurations;
+using TheMerkleTrees.Domain.Models;
 using TheMerkleTrees.Infrastructure.Entities;
 using TheMerkleTrees.Infrastructure.Mappers;
 using File = TheMerkleTrees.Domain.Models.File;
@@ -49,4 +50,13 @@ public class FileRepository : IFileRepository
         (await _filesCollection.Find(file => file.Owner == userId && file.Category == category).ToListAsync())
         .Select(entity => entity.ToDomain())
         .ToList();
+    
+    public async Task<List<File>> GetFilesByFolderAsync(string folderId)
+    =>
+        (await _filesCollection.Find(file => file.FolderId == folderId).ToListAsync()).Select(entity => entity.ToDomain()).ToList();
+        
+    public async Task UpdateAsync(File updatedFile)
+    {
+        await _filesCollection.ReplaceOneAsync(file => file.Id == updatedFile.Id, updatedFile.ToEntity());
+    }
 }

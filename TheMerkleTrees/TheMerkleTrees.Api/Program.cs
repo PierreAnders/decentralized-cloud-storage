@@ -58,6 +58,8 @@ builder.Services.AddSingleton<IFileRepository, FileRepository>();
 builder.Services.AddSingleton<ICategoryRepository, CategoryRepository>();
 builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<IShortcutRepository, ShortcutRepository>();
+builder.Services.AddScoped<IFolderRepository, FolderRepository>();
+
 
 builder.Services.AddHttpContextAccessor();
 

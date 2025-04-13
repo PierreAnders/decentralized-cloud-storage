@@ -13,18 +13,27 @@ namespace TheMerkleTrees.Api.Controllers
     public class FilesController : ControllerBase
     {
         private readonly IFileRepository _fileRepository;
+        private readonly IFolderRepository _folderRepository;
         private readonly HttpClient _httpClient;
         private readonly string _ipfsGatewayUrl;
         private readonly string _ipfsApiUrl;
         private readonly bool _isDevelopment;
+        private readonly ILogger<FilesController> _logger;
 
-        public FilesController(IFileRepository mongoDbService, HttpClient httpClient, IConfiguration configuration)
+        public FilesController(
+            IFileRepository fileRepository, 
+            IFolderRepository folderRepository,
+            HttpClient httpClient, 
+            IConfiguration configuration,
+            ILogger<FilesController> logger)
         {
-            _fileRepository = mongoDbService;
+            _fileRepository = fileRepository;
+            _folderRepository = folderRepository;
             _httpClient = httpClient;
             _ipfsGatewayUrl = configuration["Ipfs:GatewayUrl"];
             _ipfsApiUrl = configuration["Ipfs:ApiUrl"];
             _isDevelopment = bool.Parse(configuration["Environment:IsDevelopment"]);
+            _logger = logger;
         }
 
         [HttpPost]
@@ -79,10 +88,38 @@ namespace TheMerkleTrees.Api.Controllers
             return files;
         }
 
+        [HttpGet("folder/{folderId}")]
+        public async Task<ActionResult<List<File>>> GetFilesByFolder(string folderId)
+        {
+            var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            
+            if (userId == null)
+            {
+                return Unauthorized();
+            }
+            
+            // Vérifier que le dossier appartient à l'utilisateur
+            var folder = await _folderRepository.GetByIdAsync(folderId);
+            if (folder == null || folder.Owner != userId)
+            {
+                return NotFound("Dossier non trouvé ou accès non autorisé");
+            }
+            
+            var files = await _fileRepository.GetFilesByFolderAsync(folderId);
+
+            return files;
+        }
+
         [HttpPost("upload")]
         [RequestSizeLimit(1073741824)] 
-        public async Task<IActionResult> UploadFile([FromForm] IFormFile file, [FromForm] string category,
-            [FromForm] bool isPublic, [FromForm] string userAddress, [FromForm] string salt = null)
+        public async Task<IActionResult> UploadFile(
+            [FromForm] IFormFile file, 
+            [FromForm] string category,
+            [FromForm] bool isPublic, 
+            [FromForm] string userAddress, 
+            [FromForm] string folderId = null,
+            [FromForm] string salt = null,
+            [FromForm] string iv = null)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             
@@ -94,6 +131,16 @@ namespace TheMerkleTrees.Api.Controllers
             if (file == null || file.Length == 0)
             {
                 return BadRequest("No file uploaded.");
+            }
+
+            // Vérifier que le dossier existe et appartient à l'utilisateur
+            if (!string.IsNullOrEmpty(folderId))
+            {
+                var folder = await _folderRepository.GetByIdAsync(folderId);
+                if (folder == null || folder.Owner != userId)
+                {
+                    return BadRequest("Dossier non trouvé ou accès non autorisé");
+                }
             }
             
             byte[] fileContent;
@@ -114,7 +161,7 @@ namespace TheMerkleTrees.Api.Controllers
             var cid = result.Hash;
             var url = $"ipfs://{cid}";
             
-            // Création de l'enregistrement du fichier avec le sel au lieu des clés
+            // Création de l'enregistrement du fichier avec le sel et l'IV
             var fileRecord = new File
             {
                 Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString(),
@@ -123,17 +170,49 @@ namespace TheMerkleTrees.Api.Controllers
                 Category = category,
                 IsPublic = isPublic,
                 Owner = userId,
-                // Stockage du sel au lieu des clés de chiffrement
+                FolderId = folderId, // Nouveau champ pour le dossier
                 Salt = salt,
-                // Les clés ne sont plus utilisées
-                Key = null,
-                IV = null,
+                IV = iv, // Nouveau champ pour l'IV
                 Extension = Path.GetExtension(file.FileName)
             };
 
             await _fileRepository.CreateAsync(fileRecord);
 
             return Ok(new { Message = "File uploaded successfully", Url = url });
+        }
+
+        [HttpPost("move")]
+        public async Task<IActionResult> MoveFile([FromBody] MoveFileRequest request)
+        {
+            var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            
+            if (userId == null)
+            {
+                return Unauthorized();
+            }
+
+            // Vérifier que le fichier existe et appartient à l'utilisateur
+            var file = await _fileRepository.GetAsync(request.FileName, userId);
+            if (file == null)
+            {
+                return NotFound("Fichier non trouvé");
+            }
+
+            // Vérifier que le dossier de destination existe et appartient à l'utilisateur
+            if (!string.IsNullOrEmpty(request.DestinationFolderId))
+            {
+                var folder = await _folderRepository.GetByIdAsync(request.DestinationFolderId);
+                if (folder == null || folder.Owner != userId)
+                {
+                    return BadRequest("Dossier de destination non trouvé ou accès non autorisé");
+                }
+            }
+
+            // Mettre à jour le dossier du fichier
+            file.FolderId = request.DestinationFolderId;
+            await _fileRepository.UpdateAsync(file);
+
+            return Ok(new { Message = "File moved successfully" });
         }
 
         // Endpoint pour récupérer le fichier chiffré directement
@@ -161,7 +240,7 @@ namespace TheMerkleTrees.Api.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erreur lors de la récupération via le nœud local : {ex.Message}");
+                _logger.LogError(ex, "Erreur lors de la récupération via le nœud IPFS : {Message}", ex.Message);
                 return BadRequest("Impossible de récupérer le fichier depuis IPFS.");
             }
 
@@ -169,7 +248,28 @@ namespace TheMerkleTrees.Api.Controllers
             return File(fileContent, "application/octet-stream", file.Name);
         }
 
-        // Nouvel endpoint pour récupérer le sel associé à un fichier
+        // Endpoint pour récupérer le sel et l'IV associés à un fichier
+        [HttpGet("crypto-params/{name}")]
+        public async Task<IActionResult> GetCryptoParams(string name)
+        {
+            var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            
+            if (userId == null)
+            {
+                return Unauthorized();
+            }
+
+            var file = await _fileRepository.GetAsync(name, userId);
+            if (file == null)
+            {
+                return NotFound("Fichier non trouvé.");
+            }
+
+            // Retourne le sel et l'IV associés au fichier
+            return Ok(new { salt = file.Salt, iv = file.IV });
+        }
+
+        // Maintien de l'ancien endpoint pour la compatibilité
         [HttpGet("salt/{name}")]
         public async Task<IActionResult> GetSalt(string name)
         {
@@ -190,7 +290,7 @@ namespace TheMerkleTrees.Api.Controllers
             return Ok(new { salt = file.Salt });
         }
 
-        // Maintien de l'ancien endpoint pour la compatibilité, mais il redirige vers le nouvel endpoint
+        // Maintien de l'ancien endpoint pour la compatibilité
         [HttpGet("decrypt/{name}")]
         public async Task<IActionResult> DecryptFile(string name)
         {
@@ -248,7 +348,7 @@ namespace TheMerkleTrees.Api.Controllers
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Erreur lors de la récupération depuis IPFS : {ex.Message}");
+                    _logger.LogError(ex, "Erreur lors de la récupération depuis IPFS : {Message}", ex.Message);
                     throw;
                 }
             }
@@ -257,6 +357,12 @@ namespace TheMerkleTrees.Api.Controllers
         private class AddResponse
         {
             public string Hash { get; set; }
+        }
+
+        public class MoveFileRequest
+        {
+            public string FileName { get; set; }
+            public string DestinationFolderId { get; set; }
         }
     }
 }
