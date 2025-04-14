@@ -3,37 +3,39 @@
     <BurgerMenu />
     <div class="flex items-center justify-center pt-8">
       <h1 class="pr-3 tracking-wider text-light-gray">
-        {{ currentFolder ? currentFolder.name.toUpperCase() : 'RACINE' }}
+        {{ folderName.toUpperCase() }}
       </h1>
       <IconFolder />
     </div>
-
-    <!-- Chemin de navigation (breadcrumb) -->
+    
+    <!-- Fil d'Ariane -->
     <div class="flex items-center justify-center mt-4 text-sm text-light-gray">
       <span 
-        @click="navigateToRoot" 
+        @click="navigateToDocuments" 
         class="cursor-pointer hover:text-white"
       >
-        Racine
+        Documents
       </span>
-      <span v-for="(folder, index) in breadcrumb" :key="folder.id" class="flex items-center">
-        <span class="mx-2">/</span>
+      <template v-for="(folder, index) in breadcrumb" :key="folder.id">
+        <span class="mx-1">/</span>
         <span 
-          @click="navigateToFolder(folder.id)" 
+          @click="navigateToBreadcrumbFolder(folder.id)" 
           class="cursor-pointer hover:text-white"
         >
           {{ folder.name }}
         </span>
-      </span>
+      </template>
+      <span class="mx-1">/</span>
+      <span class="text-white">{{ folderName }}</span>
     </div>
-
+    
     <!-- Liste des sous-dossiers -->
     <div v-if="subfolders.length > 0" class="w-3/4 mx-auto mt-8 md:w-2/3 lg:w-1/2">
-      <h2 class="mb-4 text-sm text-light-gray">Dossiers</h2>
+      <h2 class="mb-4 text-sm text-light-gray">Sous-dossiers</h2>
       <ul class="flex flex-col">
         <li v-for="folder in subfolders" :key="folder.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
           <div class="flex justify-between w-full">
-            <div class="flex items-center space-x-2 cursor-pointer" @click="navigateToFolder(folder.id)">
+            <div class="flex items-center space-x-2 cursor-pointer" @click="navigateToSubfolder(folder.id)">
               <IconFolder :color="'#828282'" iclass="opacity-50" />
               <span class="text-sm">{{ folder.name }}</span>
             </div>
@@ -51,15 +53,15 @@
         </li>
       </ul>
     </div>
-
+    
     <!-- Liste des fichiers -->
     <ul class="flex flex-col w-3/4 mx-auto mt-8 mb-8 md:w-2/3 lg:w-1/2">
       <h2 class="mb-4 text-sm text-light-gray">Fichiers</h2>
-      <li v-for="file in fileList" :key="file.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
+      <li v-for="file in processedFileList" :key="file.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
         <div class="flex justify-between w-full">
           <div class="flex items-center space-x-2">
             <IconDocument :color="'#828282'" iclass="opacity-50" />
-            <span class="text-sm">{{ file.name }}</span>
+            <span class="text-sm">{{ file.displayName }}</span>
           </div>
           <div class="flex items-center space-x-2">
             <button @click="deleteFile(file.name)">
@@ -74,9 +76,13 @@
             </button>
           </div>
         </div>
+        <!-- Afficher les métadonnées déchiffrées si disponibles -->
+        <div v-if="file.metadata && file.metadata.description" class="mt-1 text-sm text-light-gray">
+          {{ file.metadata.description }}
+        </div>
       </li>
     </ul>
-
+    
     <!-- Actions -->
     <div class="flex justify-center space-x-8">
       <!-- Ajouter un fichier -->
@@ -88,7 +94,7 @@
           <input type="file" id="fileInput" ref="fileInput"
             accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.html,.mp3,.mp4,.png,.jpg,.jpeg,.gif,mpeg,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov,.wmv,.mkv,.flv,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov"
             class="p-2 border rounded-md bg-neutral-300 text-neutral-800 focus:outline-none focus:border-amber-800"
-            @change="uploadFile" style="display: none" />
+            @change="showFileMetadataModal" style="display: none" />
         </label>
         <div class="flex flex-col items-center">
           <h2 class="text-light-gray text-sm">Ajouter un fichier</h2>
@@ -98,27 +104,27 @@
           </div>
         </div>
       </div>
-
-      <!-- Créer un dossier -->
+      
+      <!-- Créer un sous-dossier -->
       <div class="flex flex-col justify-center">
-        <div class="flex flex-col justify-center cursor-pointer text-light-gray" @click="showCreateFolder">
+        <div class="flex flex-col justify-center cursor-pointer text-light-gray" @click="showCreateFolderModal">
           <IconNewFolder class="pb-2 mx-auto transition-transform transform w-14 hover:scale-110" />
         </div>
         <div class="flex flex-col items-center">
-          <h2 class="text-light-gray text-sm">Créer un dossier</h2>
+          <h2 class="text-light-gray text-sm">Créer un sous-dossier</h2>
         </div>
       </div>
     </div>
-
+    
     <!-- Modal pour créer/renommer un dossier -->
     <div v-if="showFolderModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
       <div class="p-6 bg-dark-gray rounded-lg shadow-lg">
-        <h2 class="mb-4 text-xl text-white">{{ editingFolder ? 'Renommer le dossier' : 'Créer un dossier' }}</h2>
+        <h2 class="mb-4 text-xl text-white">{{ editingFolder ? 'Renommer le dossier' : 'Créer un sous-dossier' }}</h2>
         <input 
-          v-model="folderName" 
+          v-model="newFolderName" 
           class="w-full p-2 mb-4 text-white bg-black border border-gray-700 rounded"
           placeholder="Nom du dossier"
-          @keyup.enter="editingFolder ? updateFolder() : createFolder()"
+          @keyup.enter="editingFolder ? updateFolder() : createSubfolder()"
         />
         <div class="flex justify-between">
           <button 
@@ -128,10 +134,59 @@
             Annuler
           </button>
           <button 
-            @click="editingFolder ? updateFolder() : createFolder()" 
+            @click="editingFolder ? updateFolder() : createSubfolder()" 
             class="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-500"
           >
             {{ editingFolder ? 'Renommer' : 'Créer' }}
+          </button>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Modal pour les métadonnées du fichier -->
+    <div v-if="showMetadataModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+      <div class="p-6 bg-dark-gray rounded-lg shadow-lg w-full max-w-md">
+        <h2 class="mb-4 text-xl text-white">Métadonnées du fichier</h2>
+        
+        <div class="mb-4">
+          <label class="block text-sm text-light-gray mb-1">Nom d'affichage</label>
+          <input 
+            v-model="fileMetadata.displayName" 
+            class="w-full p-2 text-white bg-black border border-gray-700 rounded"
+            placeholder="Nom d'affichage"
+          />
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm text-light-gray mb-1">Description</label>
+          <textarea 
+            v-model="fileMetadata.description" 
+            class="w-full p-2 text-white bg-black border border-gray-700 rounded h-24"
+            placeholder="Description du fichier"
+          ></textarea>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm text-light-gray mb-1">Tags (séparés par des virgules)</label>
+          <input 
+            v-model="fileMetadata.tags" 
+            class="w-full p-2 text-white bg-black border border-gray-700 rounded"
+            placeholder="tag1, tag2, tag3"
+          />
+        </div>
+        
+        <div class="flex justify-between">
+          <button 
+            @click="closeMetadataModal" 
+            class="px-4 py-2 text-white bg-gray-700 rounded hover:bg-gray-600"
+          >
+            Annuler
+          </button>
+          <button 
+            @click="uploadFileWithMetadata" 
+            class="px-4 py-2 text-white bg-blue-600 rounded hover:bg-blue-500"
+          >
+            Téléverser
           </button>
         </div>
       </div>
@@ -149,154 +204,205 @@ export default {
   data() {
     return {
       fileList: [],
+      processedFileList: [], // Liste des fichiers avec métadonnées déchiffrées
+      folderName: "",
+      currentFolderId: null,
       subfolders: [],
       breadcrumb: [],
-      currentFolder: null,
-      currentFolderId: null,
       isPublic: false,
       showFolderModal: false,
-      folderName: "",
+      newFolderName: "",
       editingFolder: null,
+      
+      // Nouvelles propriétés pour les métadonnées
+      showMetadataModal: false,
+      selectedFile: null,
+      fileMetadata: {
+        displayName: "",
+        description: "",
+        tags: ""
+      }
     };
   },
   mounted() {
-    // Récupérer l'ID du dossier depuis l'URL si présent
-    const folderId = this.$route.query.folderId;
-    if (folderId) {
-      this.currentFolderId = folderId;
-      this.loadFolder(folderId);
-    } else {
-      this.loadRootContent();
+    // Récupérer le nom du dossier depuis l'URL
+    this.folderName = this.$route.params.folderName;
+    
+    // Récupérer l'ID du dossier depuis les paramètres de requête
+    this.currentFolderId = this.$route.query.folderId;
+    
+    // Si l'ID du dossier est fourni, l'utiliser directement
+    if (this.currentFolderId) {
+      this.loadFolder(this.currentFolderId);
+    } 
+    // Sinon, essayer de trouver le dossier par son nom (pour la compatibilité)
+    else {
+      this.findFolderByName(this.folderName);
     }
   },
   methods: {
-    loadRootContent() {
-      this.currentFolder = null;
-      this.currentFolderId = null;
-      this.breadcrumb = [];
-      this.loadFileList();
-      this.loadSubfolders();
-    },
-    loadFolder(folderId) {
-      if (process.client) {
-        const jwtToken = this.getJwtToken();
-
-        axios
-          .get(`${BASE_URL}/api/Folders/${folderId}`, {
-            headers: {
-              Authorization: `Bearer ${jwtToken}`,
-              "Content-Type": "application/json",
-            },
-          })
-          .then((response) => {
-            this.currentFolder = response.data;
-            this.currentFolderId = folderId;
-            this.loadBreadcrumb(this.currentFolder);
-            this.loadFileList();
-            this.loadSubfolders();
-          })
-          .catch((error) => {
-            console.error("Erreur lors du chargement du dossier:", error);
-            this.loadRootContent(); // Retour à la racine en cas d'erreur
-          });
-      }
-    },
-    loadBreadcrumb(folder) {
-      this.breadcrumb = [];
-      this.buildBreadcrumb(folder);
-    },
-    buildBreadcrumb(folder) {
-      if (!folder || !folder.parentId) {
-        return;
-      }
-
+    // Méthode pour trouver un dossier par son nom (pour la compatibilité)
+    async findFolderByName(folderName) {
       const jwtToken = this.getJwtToken();
       
-      axios
-        .get(`${BASE_URL}/api/Folders/${folder.parentId}`, {
+      try {
+        // Récupérer tous les dossiers racine
+        const response = await axios.get(`${BASE_URL}/api/Folders/root`, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
             "Content-Type": "application/json",
-          },
-        })
-        .then((response) => {
+          }
+        });
+        
+        if (response.status === 200) {
+          // Chercher le dossier par son nom
+          const folder = response.data.find(f => f.name === folderName);
+          if (folder) {
+            this.currentFolderId = folder.id;
+            this.loadFolder(folder.id);
+          } else {
+            console.error("Dossier non trouvé");
+          }
+        }
+      } catch (error) {
+        console.error("Erreur lors de la recherche du dossier:", error);
+      }
+    },
+    
+    // Méthode pour charger un dossier et ses sous-dossiers
+    async loadFolder(folderId) {
+      const jwtToken = this.getJwtToken();
+      
+      try {
+        // Charger les détails du dossier
+        const folderResponse = await axios.get(`${BASE_URL}/api/Folders/${folderId}`, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          }
+        });
+        
+        if (folderResponse.status === 200) {
+          const folder = folderResponse.data;
+          this.folderName = folder.name;
+          
+          // Mettre à jour l'URL sans recharger la page
+          this.$router.replace({
+            params: { folderName: this.folderName },
+            query: { folderId: folderId }
+          });
+          
+          // Charger le fil d'Ariane
+          this.loadBreadcrumb(folder);
+          
+          // Charger les sous-dossiers
+          this.loadSubfolders(folderId);
+          
+          // Charger les fichiers du dossier
+          this.loadFileList(folderId);
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement du dossier:", error);
+      }
+    },
+    
+    // Méthode pour charger les sous-dossiers
+    async loadSubfolders(folderId) {
+      const jwtToken = this.getJwtToken();
+      
+      try {
+        const response = await axios.get(`${BASE_URL}/api/Folders/${folderId}/subfolders`, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          }
+        });
+        
+        if (response.status === 200) {
+          this.subfolders = response.data;
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement des sous-dossiers:", error);
+      }
+    },
+    
+    // Méthode pour construire le fil d'Ariane
+    async loadBreadcrumb(folder) {
+      this.breadcrumb = [];
+      await this.buildBreadcrumb(folder);
+    },
+    
+    // Méthode récursive pour construire le fil d'Ariane
+    async buildBreadcrumb(folder) {
+      if (!folder || !folder.parentId) {
+        return;
+      }
+      
+      const jwtToken = this.getJwtToken();
+      
+      try {
+        const response = await axios.get(`${BASE_URL}/api/Folders/${folder.parentId}`, {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+            "Content-Type": "application/json",
+          }
+        });
+        
+        if (response.status === 200) {
           const parentFolder = response.data;
           this.breadcrumb.unshift(parentFolder);
-          this.buildBreadcrumb(parentFolder);
-        })
-        .catch((error) => {
-          console.error("Erreur lors du chargement du chemin de navigation:", error);
-        });
-    },
-    loadFileList() {
-      if (process.client) {
-        const jwtToken = this.getJwtToken();
-        const endpoint = this.currentFolderId 
-          ? `${BASE_URL}/api/Files/folder/${this.currentFolderId}`
-          : `${BASE_URL}/api/Files/user`;
-
-        axios
-          .get(endpoint, {
-            headers: {
-              Authorization: `Bearer ${jwtToken}`,
-              "Content-Type": "application/json",
-            },
-          })
-          .then((response) => {
-            this.fileList = response.data;
-          })
-          .catch((error) => console.error(error));
-      } else {
-        console.error(
-          "Le code est exécuté côté serveur (SSR), localStorage n'est pas disponible."
-        );
+          await this.buildBreadcrumb(parentFolder);
+        }
+      } catch (error) {
+        console.error("Erreur lors du chargement du chemin de navigation:", error);
       }
     },
-    loadSubfolders() {
-      if (process.client) {
-        const jwtToken = this.getJwtToken();
-        const endpoint = this.currentFolderId 
-          ? `${BASE_URL}/api/Folders/${this.currentFolderId}/subfolders`
-          : `${BASE_URL}/api/Folders/root`;
-
-        axios
-          .get(endpoint, {
-            headers: {
-              Authorization: `Bearer ${jwtToken}`,
-              "Content-Type": "application/json",
-            },
-          })
-          .then((response) => {
-            this.subfolders = response.data;
-          })
-          .catch((error) => console.error("Erreur lors du chargement des sous-dossiers:", error));
+    
+    // Méthode pour naviguer vers un sous-dossier
+    navigateToSubfolder(subfolderId) {
+      const subfolder = this.subfolders.find(f => f.id === subfolderId);
+      if (subfolder) {
+        this.$router.push(`/folders/${subfolder.name}?folderId=${subfolderId}`);
       }
     },
-    navigateToRoot() {
-      this.loadRootContent();
-      this.$router.push({ query: {} });
+    
+    // Méthode pour revenir à la page documents
+    navigateToDocuments() {
+      this.$router.push('/documents');
     },
-    navigateToFolder(folderId) {
-      this.loadFolder(folderId);
-      this.$router.push({ query: { folderId } });
+    
+    // Méthode pour naviguer vers un dossier parent dans le fil d'Ariane
+    navigateToBreadcrumbFolder(folderId) {
+      const folder = this.breadcrumb.find(f => f.id === folderId);
+      if (folder) {
+        this.$router.push(`/folders/${folder.name}?folderId=${folderId}`);
+      }
     },
-    showCreateFolder() {
+    
+    // Méthode pour afficher le modal de création de sous-dossier
+    showCreateFolderModal() {
       this.editingFolder = null;
-      this.folderName = "";
+      this.newFolderName = "";
       this.showFolderModal = true;
     },
+
+    // Méthode pour afficher le modal de renommage de dossier
     showRenameFolder(folder) {
       this.editingFolder = folder;
-      this.folderName = folder.name;
+      this.newFolderName = folder.name;
       this.showFolderModal = true;
     },
+
+    // Méthode pour fermer le modal
     closeFolderModal() {
       this.showFolderModal = false;
-      this.folderName = "";
+      this.newFolderName = "";
       this.editingFolder = null;
     },
-    createFolder() {
-      if (!this.folderName.trim()) {
+
+    // Méthode pour créer un sous-dossier
+    async createSubfolder() {
+      if (!this.newFolderName.trim()) {
         alert("Veuillez entrer un nom de dossier");
         return;
       }
@@ -304,33 +410,32 @@ export default {
       const jwtToken = this.getJwtToken();
       
       const newFolder = {
-        id: "test",
-        name: this.folderName.trim(),
+        name: this.newFolderName.trim(),
         parentId: this.currentFolderId,
-        isPublic: false,
-        owner: "test",
-
+        isPublic: false
       };
-      console.log(newFolder);
 
-      axios
-        .post(`${BASE_URL}/api/Folders`, newFolder, {
+      try {
+        const response = await axios.post(`${BASE_URL}/api/Folders`, newFolder, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
             "Content-Type": "application/json",
           },
-        })
-        .then(() => {
-          this.loadSubfolders();
-          this.closeFolderModal();
-        })
-        .catch((error) => {
-          console.error("Erreur lors de la création du dossier:", error);
-          alert("Erreur lors de la création du dossier");
         });
+
+        if (response.status === 201) {
+          this.loadSubfolders(this.currentFolderId);
+          this.closeFolderModal();
+        }
+      } catch (error) {
+        console.error("Erreur lors de la création du sous-dossier:", error);
+        alert("Erreur lors de la création du sous-dossier");
+      }
     },
-    updateFolder() {
-      if (!this.folderName.trim()) {
+
+    // Méthode pour renommer un dossier
+    async updateFolder() {
+      if (!this.newFolderName.trim()) {
         alert("Veuillez entrer un nom de dossier");
         return;
       }
@@ -338,49 +443,130 @@ export default {
       const jwtToken = this.getJwtToken();
       
       const updateData = {
-        name: this.folderName.trim(),
+        name: this.newFolderName.trim(),
         parentId: this.editingFolder.parentId,
         isPublic: this.editingFolder.isPublic
       };
 
-      axios
-        .put(`${BASE_URL}/api/Folders/${this.editingFolder.id}`, updateData, {
+      try {
+        const response = await axios.put(`${BASE_URL}/api/Folders/${this.editingFolder.id}`, updateData, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
             "Content-Type": "application/json",
           },
-        })
-        .then(() => {
-          this.loadSubfolders();
-          this.closeFolderModal();
-        })
-        .catch((error) => {
-          console.error("Erreur lors de la mise à jour du dossier:", error);
-          alert("Erreur lors de la mise à jour du dossier");
         });
+
+        if (response.status === 200) {
+          // Si c'est le dossier courant qui est renommé
+          if (this.editingFolder.id === this.currentFolderId) {
+            this.folderName = this.newFolderName.trim();
+            // Mettre à jour l'URL
+            this.$router.replace({
+              params: { folderName: this.folderName },
+              query: { folderId: this.currentFolderId }
+            });
+          }
+          
+          this.loadSubfolders(this.currentFolderId);
+          this.closeFolderModal();
+        }
+      } catch (error) {
+        console.error("Erreur lors de la mise à jour du dossier:", error);
+        alert("Erreur lors de la mise à jour du dossier");
+      }
     },
-    deleteFolder(folderId) {
+
+    // Méthode pour supprimer un dossier
+    async deleteFolder(folderId) {
       if (!confirm("Êtes-vous sûr de vouloir supprimer ce dossier et tout son contenu ?")) {
         return;
       }
 
       const jwtToken = this.getJwtToken();
 
-      axios
-        .delete(`${BASE_URL}/api/Folders/${folderId}`, {
+      try {
+        const response = await axios.delete(`${BASE_URL}/api/Folders/${folderId}`, {
           headers: {
             Authorization: `Bearer ${jwtToken}`,
             "Content-Type": "application/json",
           },
-        })
-        .then(() => {
-          this.loadSubfolders();
-        })
-        .catch((error) => {
-          console.error("Erreur lors de la suppression du dossier:", error);
-          alert("Erreur lors de la suppression du dossier");
         });
+
+        if (response.status === 204) {
+          this.loadSubfolders(this.currentFolderId);
+        }
+      } catch (error) {
+        console.error("Erreur lors de la suppression du dossier:", error);
+        alert("Erreur lors de la suppression du dossier");
+      }
     },
+    
+    // Méthode pour charger les fichiers d'un dossier
+    async loadFileList(folderId) {
+      if (process.client) {
+        const jwtToken = this.getJwtToken();
+        
+        try {
+          const response = await axios.get(`${BASE_URL}/api/Files/folder/${folderId}`, {
+            headers: {
+              Authorization: `Bearer ${jwtToken}`,
+              "Content-Type": "application/json",
+            },
+          });
+          
+          this.fileList = response.data;
+          
+          // Traiter les métadonnées des fichiers
+          await this.processFileMetadata();
+        } catch (error) {
+          console.error("Erreur lors du chargement des fichiers:", error);
+        }
+      }
+    },
+    
+    // Méthode pour traiter les métadonnées des fichiers
+    async processFileMetadata() {
+      this.processedFileList = [...this.fileList];
+      
+      // Si l'utilisateur n'a pas de mot de passe, on ne peut pas déchiffrer les métadonnées
+      if (!pbkdf2CryptoService.hasUserPassword()) {
+        // Utiliser le nom du fichier comme nom d'affichage
+        this.processedFileList.forEach(file => {
+          file.displayName = file.name;
+        });
+        return;
+      }
+      
+      // Déchiffrer les métadonnées pour chaque fichier non public qui en possède
+      for (let i = 0; i < this.processedFileList.length; i++) {
+        const file = this.processedFileList[i];
+        
+        // Par défaut, utiliser le nom du fichier comme nom d'affichage
+        file.displayName = file.name;
+        
+        // Si le fichier a des métadonnées chiffrées et n'est pas public, essayer de les déchiffrer
+        if (!file.isPublic && file.encryptedMetadata && file.metadataSalt && file.metadataIV) {
+          try {
+            const metadata = await pbkdf2CryptoService.decryptMetadata(
+              file.encryptedMetadata,
+              file.metadataSalt,
+              file.metadataIV
+            );
+            
+            file.metadata = metadata;
+            
+            // Utiliser le nom d'affichage des métadonnées s'il existe
+            if (metadata.displayName) {
+              file.displayName = metadata.displayName;
+            }
+          } catch (error) {
+            console.error(`Erreur lors du déchiffrement des métadonnées pour ${file.name}:`, error);
+          }
+        }
+      }
+    },
+
+    // Méthode pour supprimer un fichier
     deleteFile(fileName) {
       const jwtToken = this.getJwtToken();
 
@@ -392,10 +578,12 @@ export default {
           },
         })
         .then(() => {
-          this.loadFileList();
+          this.loadFileList(this.currentFolderId);
         })
         .catch((error) => console.error(error));
     },
+
+    // Méthode pour télécharger un fichier
     async downloadFile(fileName) {
       try {
         const jwtToken = this.getJwtToken();
@@ -465,6 +653,7 @@ export default {
         }
       }
     },
+
     saveBlob(blob, fileName) {
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -475,6 +664,7 @@ export default {
       link.remove();
       window.URL.revokeObjectURL(url);
     },
+
     async openFile(fileName) {
       try {
         const jwtToken = this.getJwtToken();
@@ -617,6 +807,7 @@ export default {
         }
       }
     },
+
     getFileType(fileName) {
       const parts = fileName.split(".");
       if (parts.length > 1) {
@@ -624,25 +815,61 @@ export default {
       }
       return "";
     },
+
     displayTextFile(textData, openInNewWindow = false) {
       if (openInNewWindow) {
         const newTab = window.open();
         newTab.document.write("<pre>" + textData + "</pre>");
       }
     },
-    async uploadFile() {
-      const jwtToken = this.getJwtToken();
-      const fileInput = this.$refs.fileInput;
 
+    // Méthode pour afficher le modal des métadonnées
+    showFileMetadataModal(event) {
+      const fileInput = this.$refs.fileInput;
       if (fileInput.files.length === 0) {
-        console.error("Aucun fichier sélectionné.");
         return;
       }
-
-      const file = fileInput.files[0];
+      
+      this.selectedFile = fileInput.files[0];
+      
+      // Initialiser les métadonnées avec le nom du fichier
+      this.fileMetadata = {
+        displayName: this.selectedFile.name,
+        description: "",
+        tags: ""
+      };
+      
+      this.showMetadataModal = true;
+    },
+    
+    // Méthode pour fermer le modal des métadonnées
+    closeMetadataModal() {
+      this.showMetadataModal = false;
+      this.selectedFile = null;
+      this.fileMetadata = {
+        displayName: "",
+        description: "",
+        tags: ""
+      };
+      
+      // Réinitialiser l'input file
+      this.$refs.fileInput.value = "";
+    },
+    
+    // Méthode pour téléverser un fichier avec métadonnées
+    async uploadFileWithMetadata() {
+      if (!this.selectedFile) {
+        alert("Aucun fichier sélectionné.");
+        return;
+      }
+      
+      const jwtToken = this.getJwtToken();
       let fileToUpload;
       let salt = null;
       let iv = null;
+      let encryptedMetadata = null;
+      let metadataSalt = null;
+      let metadataIV = null;
 
       try {
         if (!this.isPublic) {
@@ -655,25 +882,41 @@ export default {
             pbkdf2CryptoService.setUserPassword(password);
           }
 
-          const encryptionResult = await pbkdf2CryptoService.encryptFile(file);
+          // Chiffrer le fichier
+          const encryptionResult = await pbkdf2CryptoService.encryptFile(this.selectedFile);
           fileToUpload = encryptionResult.encryptedFile;
           salt = encryptionResult.salt;
           iv = encryptionResult.iv;
+          
+          // Chiffrer les métadonnées
+          const metadataResult = await pbkdf2CryptoService.encryptMetadata({
+            displayName: this.fileMetadata.displayName,
+            description: this.fileMetadata.description,
+            tags: this.fileMetadata.tags.split(',').map(tag => tag.trim()).filter(tag => tag),
+            originalName: this.selectedFile.name,
+            dateAdded: new Date().toISOString()
+          });
+          
+          encryptedMetadata = metadataResult.encryptedMetadata;
+          metadataSalt = metadataResult.metadataSalt;
+          metadataIV = metadataResult.metadataIV;
         } else {
-          fileToUpload = file;
+          fileToUpload = this.selectedFile;
         }
 
         const formData = new FormData();
-        formData.append("file", fileToUpload, file.name);
-        formData.append("category", "files"); // Catégorie par défaut
+        formData.append("file", fileToUpload, this.selectedFile.name);
         formData.append("isPublic", this.isPublic);
         formData.append("userAddress", "user-address");
         formData.append("salt", salt);
         formData.append("iv", iv);
+        formData.append("folderId", this.currentFolderId);
         
-        // Ajouter l'ID du dossier si on est dans un dossier
-        if (this.currentFolderId) {
-          formData.append("folderId", this.currentFolderId);
+        // Ajouter les métadonnées chiffrées si disponibles
+        if (encryptedMetadata) {
+          formData.append("encryptedMetadata", encryptedMetadata);
+          formData.append("metadataSalt", metadataSalt);
+          formData.append("metadataIV", metadataIV);
         }
 
         await axios.post(`${BASE_URL}/api/Files/upload`, formData, {
@@ -683,13 +926,14 @@ export default {
           },
         });
 
-        this.loadFileList();
-        fileInput.value = "";
+        this.closeMetadataModal();
+        this.loadFileList(this.currentFolderId);
       } catch (error) {
         console.error("Erreur lors de l'upload:", error);
         alert("Erreur lors de l'envoi du fichier.");
       }
     },
+
     getJwtToken() {
       const jwtToken = localStorage.getItem("access_token");
 
@@ -700,10 +944,12 @@ export default {
       }
       return jwtToken;
     },
+
     isFilePublic(fileName) {
       const file = this.fileList.find(f => f.name === fileName);
       return file ? file.isPublic : false;
     },
+
     async promptForPassword() {
       const storedPassword = await pbkdf2CryptoService.retrievePassword();
       if (storedPassword) {

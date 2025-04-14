@@ -39,9 +39,16 @@ namespace TheMerkleTrees.Api.Controllers
         [HttpPost]
         public async Task<IActionResult> Post(File newFile)
         {
-            await _fileRepository.CreateAsync(newFile);
-
-            return CreatedAtAction(nameof(Post), new { id = newFile.Id }, newFile);
+            try
+            {
+                await _fileRepository.CreateAsync(newFile);
+                return CreatedAtAction(nameof(Post), new { id = newFile.Id }, newFile);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la création du fichier");
+                return StatusCode(500, "Une erreur est survenue lors de la création du fichier");
+            }
         }
         
         [HttpDelete("{name}")]
@@ -53,13 +60,20 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            await _fileRepository.RemoveAsync(name, userId);
-
-            return NoContent();
+            try
+            {
+                await _fileRepository.RemoveAsync(name, userId);
+                return NoContent();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la suppression du fichier {FileName}", name);
+                return StatusCode(500, "Une erreur est survenue lors de la suppression du fichier");
+            }
         }
 
         [HttpGet("user")]
-        public async Task<ActionResult<List<File>>> GetFilesByUser()
+        public async Task<ActionResult<List<File>>> GetRootFiles()
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             
@@ -68,24 +82,16 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
             
-            var files = await _fileRepository.GetFilesByUserAsync(userId);
-
-            return files;
-        }
-        
-        [HttpGet("user/category/{category}")]
-        public async Task<ActionResult<List<File>>> GetFilesByUserAndCategory(string category)
-        {
-            var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
-            if (userId == null)
+            try
             {
-                return Unauthorized();
+                var files = await _fileRepository.GetFilesByUserAsync(userId);
+                return files;
             }
-            
-            var files = await _fileRepository.GetFilesByUserAndCategoryAsync(category, userId);
-
-            return files;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la récupération des fichiers de l'utilisateur {UserId}", userId);
+                return StatusCode(500, "Une erreur est survenue lors de la récupération des fichiers");
+            }
         }
 
         [HttpGet("folder/{folderId}")]
@@ -98,28 +104,36 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
             
-            // Vérifier que le dossier appartient à l'utilisateur
-            var folder = await _folderRepository.GetByIdAsync(folderId);
-            if (folder == null || folder.Owner != userId)
+            try
             {
-                return NotFound("Dossier non trouvé ou accès non autorisé");
+                // Vérifier que le dossier appartient à l'utilisateur
+                var folder = await _folderRepository.GetByIdAsync(folderId);
+                if (folder == null || folder.Owner != userId)
+                {
+                    return NotFound("Dossier non trouvé ou accès non autorisé");
+                }
+                
+                var files = await _fileRepository.GetFilesByFolderAsync(folderId);
+                return files;
             }
-            
-            var files = await _fileRepository.GetFilesByFolderAsync(folderId);
-
-            return files;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la récupération des fichiers du dossier {FolderId}", folderId);
+                return StatusCode(500, "Une erreur est survenue lors de la récupération des fichiers");
+            }
         }
 
         [HttpPost("upload")]
-        [RequestSizeLimit(1073741824)] 
+        [RequestSizeLimit(1073741824)] // 1 GB
         public async Task<IActionResult> UploadFile(
             [FromForm] IFormFile file, 
-            [FromForm] string category,
-            [FromForm] bool isPublic, 
-            [FromForm] string userAddress, 
+            [FromForm] bool isPublic,
             [FromForm] string folderId = null,
             [FromForm] string salt = null,
-            [FromForm] string iv = null)
+            [FromForm] string iv = null,
+            [FromForm] string encryptedMetadata = null,
+            [FromForm] string metadataSalt = null,
+            [FromForm] string metadataIV = null)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             
@@ -133,52 +147,61 @@ namespace TheMerkleTrees.Api.Controllers
                 return BadRequest("No file uploaded.");
             }
 
-            // Vérifier que le dossier existe et appartient à l'utilisateur
-            if (!string.IsNullOrEmpty(folderId))
+            try
             {
-                var folder = await _folderRepository.GetByIdAsync(folderId);
-                if (folder == null || folder.Owner != userId)
+                // Vérifier que le dossier existe et appartient à l'utilisateur
+                if (!string.IsNullOrEmpty(folderId))
                 {
-                    return BadRequest("Dossier non trouvé ou accès non autorisé");
+                    var folder = await _folderRepository.GetByIdAsync(folderId);
+                    if (folder == null || folder.Owner != userId)
+                    {
+                        return BadRequest("Dossier non trouvé ou accès non autorisé");
+                    }
                 }
+                
+                byte[] fileContent;
+                using (var ms = new MemoryStream())
+                {
+                    await file.CopyToAsync(ms);
+                    fileContent = ms.ToArray();
+                }
+
+                // Envoi direct du fichier à IPFS (déjà chiffré par le client ou fichier public)
+                var formData = new MultipartFormDataContent();
+                formData.Add(new ByteArrayContent(fileContent), "file", file.FileName);
+                
+                var response = await _httpClient.PostAsync(_ipfsApiUrl, formData);
+                response.EnsureSuccessStatusCode();
+
+                var result = await response.Content.ReadFromJsonAsync<AddResponse>();
+                var cid = result.Hash;
+                
+                // Création de l'enregistrement du fichier avec le sel, l'IV et les métadonnées chiffrées
+                var fileRecord = new File
+                {
+                    Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString(),
+                    Name = file.FileName,
+                    Hash = cid,
+                    IsPublic = isPublic,
+                    Owner = userId,
+                    FolderId = folderId,
+                    Salt = salt,
+                    IV = iv,
+                    Extension = Path.GetExtension(file.FileName),
+                    EncryptedMetadata = encryptedMetadata,
+                    MetadataSalt = metadataSalt,
+                    MetadataIV = metadataIV
+                };
+
+                await _fileRepository.CreateAsync(fileRecord);
+
+                return Ok(new { Message = "File uploaded successfully", Cid = cid, Url = $"ipfs://{cid}" });
             }
-            
-            byte[] fileContent;
-            using (var ms = new MemoryStream())
+            catch (Exception ex)
             {
-                await file.CopyToAsync(ms);
-                fileContent = ms.ToArray();
+                _logger.LogError(ex, "Erreur lors de l'upload du fichier {FileName}", file.FileName);
+                return StatusCode(500, "Une erreur est survenue lors de l'upload du fichier");
             }
-
-            // Envoi direct du fichier à IPFS (déjà chiffré par le client ou fichier public)
-            var formData = new MultipartFormDataContent();
-            formData.Add(new ByteArrayContent(fileContent), "file", file.FileName);
-            
-            var response = await _httpClient.PostAsync(_ipfsApiUrl, formData);
-            response.EnsureSuccessStatusCode();
-
-            var result = await response.Content.ReadFromJsonAsync<AddResponse>();
-            var cid = result.Hash;
-            var url = $"ipfs://{cid}";
-            
-            // Création de l'enregistrement du fichier avec le sel et l'IV
-            var fileRecord = new File
-            {
-                Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString(),
-                Name = file.FileName,
-                Hash = cid,
-                Category = category,
-                IsPublic = isPublic,
-                Owner = userId,
-                FolderId = folderId, // Nouveau champ pour le dossier
-                Salt = salt,
-                IV = iv, // Nouveau champ pour l'IV
-                Extension = Path.GetExtension(file.FileName)
-            };
-
-            await _fileRepository.CreateAsync(fileRecord);
-
-            return Ok(new { Message = "File uploaded successfully", Url = url });
         }
 
         [HttpPost("move")]
@@ -191,31 +214,38 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            // Vérifier que le fichier existe et appartient à l'utilisateur
-            var file = await _fileRepository.GetAsync(request.FileName, userId);
-            if (file == null)
+            try
             {
-                return NotFound("Fichier non trouvé");
-            }
-
-            // Vérifier que le dossier de destination existe et appartient à l'utilisateur
-            if (!string.IsNullOrEmpty(request.DestinationFolderId))
-            {
-                var folder = await _folderRepository.GetByIdAsync(request.DestinationFolderId);
-                if (folder == null || folder.Owner != userId)
+                // Vérifier que le fichier existe et appartient à l'utilisateur
+                var file = await _fileRepository.GetAsync(request.FileName, userId);
+                if (file == null)
                 {
-                    return BadRequest("Dossier de destination non trouvé ou accès non autorisé");
+                    return NotFound("Fichier non trouvé");
                 }
+
+                // Vérifier que le dossier de destination existe et appartient à l'utilisateur
+                if (!string.IsNullOrEmpty(request.DestinationFolderId))
+                {
+                    var folder = await _folderRepository.GetByIdAsync(request.DestinationFolderId);
+                    if (folder == null || folder.Owner != userId)
+                    {
+                        return BadRequest("Dossier de destination non trouvé ou accès non autorisé");
+                    }
+                }
+
+                // Mettre à jour le dossier du fichier
+                file.FolderId = request.DestinationFolderId;
+                await _fileRepository.UpdateAsync(file);
+
+                return Ok(new { Message = "File moved successfully" });
             }
-
-            // Mettre à jour le dossier du fichier
-            file.FolderId = request.DestinationFolderId;
-            await _fileRepository.UpdateAsync(file);
-
-            return Ok(new { Message = "File moved successfully" });
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors du déplacement du fichier {FileName}", request.FileName);
+                return StatusCode(500, "Une erreur est survenue lors du déplacement du fichier");
+            }
         }
 
-        // Endpoint pour récupérer le fichier chiffré directement
         [HttpGet("file/{name}")]
         public async Task<IActionResult> GetFile(string name)
         {
@@ -226,29 +256,35 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            var decodedName = Uri.UnescapeDataString(name);
-            var file = await _fileRepository.GetAsync(name, userId);
-            if (file == null)
-            {
-                return NotFound("Fichier non trouvé.");
-            }
-
-            byte[] fileContent = null;
             try
             {
-                fileContent = await GetFileFromLocalIPFSNode(file.Hash);
+                var file = await _fileRepository.GetAsync(name, userId);
+                if (file == null)
+                {
+                    return NotFound("Fichier non trouvé.");
+                }
+
+                byte[] fileContent;
+                try
+                {
+                    fileContent = await GetFileFromLocalIPFSNode(file.Hash);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Erreur lors de la récupération via le nœud IPFS : {Message}", ex.Message);
+                    return BadRequest("Impossible de récupérer le fichier depuis IPFS.");
+                }
+
+                // Retourne le fichier chiffré tel quel, le déchiffrement sera fait côté client
+                return File(fileContent, "application/octet-stream", file.Name);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erreur lors de la récupération via le nœud IPFS : {Message}", ex.Message);
-                return BadRequest("Impossible de récupérer le fichier depuis IPFS.");
+                _logger.LogError(ex, "Erreur lors de la récupération du fichier {FileName}", name);
+                return StatusCode(500, "Une erreur est survenue lors de la récupération du fichier");
             }
-
-            // Retourne le fichier chiffré tel quel, le déchiffrement sera fait côté client
-            return File(fileContent, "application/octet-stream", file.Name);
         }
 
-        // Endpoint pour récupérer le sel et l'IV associés à un fichier
         [HttpGet("crypto-params/{name}")]
         public async Task<IActionResult> GetCryptoParams(string name)
         {
@@ -259,19 +295,34 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            var file = await _fileRepository.GetAsync(name, userId);
-            if (file == null)
+            try
             {
-                return NotFound("Fichier non trouvé.");
-            }
+                var file = await _fileRepository.GetAsync(name, userId);
+                if (file == null)
+                {
+                    return NotFound("Fichier non trouvé.");
+                }
 
-            // Retourne le sel et l'IV associés au fichier
-            return Ok(new { salt = file.Salt, iv = file.IV });
+                // Retourne le sel, l'IV et les métadonnées chiffrées associés au fichier
+                return Ok(new { 
+                    salt = file.Salt, 
+                    iv = file.IV,
+                    encryptedMetadata = file.EncryptedMetadata,
+                    metadataSalt = file.MetadataSalt,
+                    metadataIV = file.MetadataIV
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la récupération des paramètres cryptographiques pour {FileName}", name);
+                return StatusCode(500, "Une erreur est survenue lors de la récupération des paramètres cryptographiques");
+            }
         }
 
-        // Maintien de l'ancien endpoint pour la compatibilité
-        [HttpGet("salt/{name}")]
-        public async Task<IActionResult> GetSalt(string name)
+        [HttpPut("metadata/{name}")]
+        public async Task<IActionResult> UpdateMetadata(
+            string name, 
+            [FromBody] UpdateMetadataRequest request)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             
@@ -280,22 +331,52 @@ namespace TheMerkleTrees.Api.Controllers
                 return Unauthorized();
             }
 
-            var file = await _fileRepository.GetAsync(name, userId);
-            if (file == null)
+            try
             {
-                return NotFound("Fichier non trouvé.");
-            }
+                var file = await _fileRepository.GetAsync(name, userId);
+                if (file == null)
+                {
+                    return NotFound("Fichier non trouvé.");
+                }
 
-            // Retourne le sel associé au fichier
-            return Ok(new { salt = file.Salt });
+                // Mettre à jour les métadonnées chiffrées
+                file.EncryptedMetadata = request.EncryptedMetadata;
+                file.MetadataSalt = request.MetadataSalt;
+                file.MetadataIV = request.MetadataIV;
+
+                await _fileRepository.UpdateAsync(file);
+
+                return Ok(new { Message = "Métadonnées mises à jour avec succès" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la mise à jour des métadonnées pour {FileName}", name);
+                return StatusCode(500, "Une erreur est survenue lors de la mise à jour des métadonnées");
+            }
         }
 
-        // Maintien de l'ancien endpoint pour la compatibilité
-        [HttpGet("decrypt/{name}")]
-        public async Task<IActionResult> DecryptFile(string name)
+        [HttpGet("search")]
+        public async Task<ActionResult<List<File>>> SearchFiles([FromQuery] string query, [FromQuery] string folderId = null)
         {
-            // Redirection vers le nouvel endpoint
-            return await GetFile(name);
+            var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
+            
+            if (userId == null)
+            {
+                return Unauthorized();
+            }
+
+            try
+            {
+                // Note: Cette recherche ne peut fonctionner que sur les noms de fichiers en clair
+                // Les métadonnées chiffrées ne peuvent pas être recherchées côté serveur
+                var files = await _fileRepository.SearchFilesByNameAsync(query, userId, folderId);
+                return files;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la recherche de fichiers avec la requête {Query}", query);
+                return StatusCode(500, "Une erreur est survenue lors de la recherche de fichiers");
+            }
         }
 
         private async Task<byte[]> GetFileFromLocalIPFSNode(string cid)
@@ -363,6 +444,13 @@ namespace TheMerkleTrees.Api.Controllers
         {
             public string FileName { get; set; }
             public string DestinationFolderId { get; set; }
+        }
+
+        public class UpdateMetadataRequest
+        {
+            public string EncryptedMetadata { get; set; }
+            public string MetadataSalt { get; set; }
+            public string MetadataIV { get; set; }
         }
     }
 }

@@ -14,6 +14,8 @@ public static  class FolderMapper
             ParentId = entity.ParentId,
             Owner = entity.Owner,
             IsPublic = entity.IsPublic,
+            CreatedAt = entity.CreatedAt,
+            UpdatedAt = entity.UpdatedAt
         };
     }
 
@@ -26,6 +28,8 @@ public static  class FolderMapper
             ParentId = folder.ParentId,
             Owner = folder.Owner,
             IsPublic = folder.IsPublic,
+            CreatedAt = folder.CreatedAt,
+            UpdatedAt = folder.UpdatedAt
         };
     }
 }

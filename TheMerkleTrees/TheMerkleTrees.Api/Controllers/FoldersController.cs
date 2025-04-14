@@ -90,7 +90,7 @@ namespace TheMerkleTrees.Api.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> CreateFolder([FromBody] Folder folder)
+        public async Task<IActionResult> CreateFolder([FromBody] FolderRequest newFolder)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             if (userId == null)
@@ -99,22 +99,36 @@ namespace TheMerkleTrees.Api.Controllers
             }
 
             // Vérifier que le dossier parent existe et appartient à l'utilisateur
-            if (!string.IsNullOrEmpty(folder.ParentId))
+            if (!string.IsNullOrEmpty(newFolder.ParentId))
             {
-                var parentFolder = await _folderRepository.GetByIdAsync(folder.ParentId);
+                var parentFolder = await _folderRepository.GetByIdAsync(newFolder.ParentId);
                 if (parentFolder == null || parentFolder.Owner != userId)
                 {
                     return BadRequest("Dossier parent non trouvé ou accès non autorisé");
                 }
             }
 
+            var folder = new Folder();
+
             // Définir le propriétaire et les dates
             folder.Id = MongoDB.Bson.ObjectId.GenerateNewId().ToString();
             folder.Owner = userId;
+            folder.Name = newFolder.Name;
+            folder.ParentId = newFolder.ParentId;
+            folder.IsPublic = newFolder.IsPublic;
+            folder.CreatedAt = DateTime.UtcNow;
+            folder.UpdatedAt = DateTime.UtcNow;
 
             await _folderRepository.CreateAsync(folder);
 
             return CreatedAtAction(nameof(GetFolder), new { id = folder.Id }, folder);
+        }
+        
+        public class FolderRequest
+        {
+            public string Name { get; set; }
+            public string? ParentId { get; set; } // null pour les dossiers racine
+            public bool IsPublic { get; set; }
         }
 
         [HttpPut("{id}")]
@@ -152,7 +166,7 @@ namespace TheMerkleTrees.Api.Controllers
             folder.Name = request.Name ?? folder.Name;
             folder.ParentId = request.ParentId;
             folder.IsPublic = request.IsPublic ?? folder.IsPublic;
-           
+            folder.UpdatedAt = DateTime.UtcNow;
 
             await _folderRepository.UpdateAsync(folder);
 
