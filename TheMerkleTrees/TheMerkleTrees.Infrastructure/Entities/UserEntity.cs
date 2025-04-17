@@ -12,4 +12,6 @@ public class UserEntity
 
     [BsonElement("PasswordHash")]
     public string PasswordHash { get; set; }
+    [BsonElement("EncryptionKey")]
+    public string EncryptionKey { get; set; }
 }

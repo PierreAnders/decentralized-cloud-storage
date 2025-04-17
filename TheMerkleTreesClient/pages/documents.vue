@@ -9,9 +9,9 @@
             <div class="mt-6 mb-24 text-white">
                 <div class="grid grid-cols-2 gap-10 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                     <div v-for="folder in folders" :key="folder.id" class="text-center"
-                        @touchstart="touchStart($event, folder.name)" @touchend="touchEnd($event)"
-                        @contextmenu.prevent="showContextMenu($event, folder.name)">
-                        <button @click="navigateToFolder(folder.name)"
+                        @touchstart="touchStart($event, folder.id)" @touchend="touchEnd($event)"
+                        @contextmenu.prevent="showContextMenu($event, folder.id)">
+                        <button @click="navigateToFolder(folder.id)"
                             class="flex flex-col items-center transition-transform transform hover:scale-105">
                             <ImageFolder class="mx-auto mb-1 w-22 h-22" />
                             <span class="text-xs">{{ folder.name }}</span>
@@ -43,7 +43,7 @@
 
                                 <button
                                     class="flex text-left text-sm py-1 rounded-sm hover:bg-[#D9D9D9] hover:bg-opacity-25"
-                                    @click="deleteFolder(contextMenu.folderName)">
+                                    @click="deleteFolder(contextMenu.folderId)">
                                     <div class="px-2">
                                         <IconSubmenuDeleteFolder class="w-5 h-5" :color="'#838383'" />
                                     </div>
@@ -96,7 +96,7 @@ export default {
             isButtonClicked: false,
             contextMenu: {
                 isVisible: false,
-                folderName: null,
+                folderId: null, // Changé de folderName à folderId
                 x: 0,
                 y: 0
             },
@@ -105,13 +105,13 @@ export default {
 
     methods: {
         // Gestion du menu contextuel pour le mobile en restant longtemps appuyé sur un dossier
-        touchStart(event, folderName){
+        touchStart(event, folderId) {
             // Si le toucher est maintenu pendant 700ms
             // On affiche le menu contextuel
-            this.touchTimeout = setTimeout(() => this.showContextMenu(event, folderName), 700)
+            this.touchTimeout = setTimeout(() => this.showContextMenu(event, folderId), 700)
         },
         // Sinon, on annule l'affichage du menu contextuel
-        touchEnd(){
+        touchEnd() {
             clearTimeout(this.touchTimeout)
         },
         
@@ -123,14 +123,14 @@ export default {
             }
         },
 
-        showContextMenu(event, folderName) {
+        showContextMenu(event, folderId) {
             event.preventDefault()
-            // Enregistrer le nom du dossier sélectionné
-            this.contextMenu.folderName = folderName
+            // Enregistrer l'ID du dossier sélectionné
+            this.contextMenu.folderId = folderId
 
             // Vérifier si l'option "Supprimer" a été sélectionnée
             if (event.target.textContent === "Supprimer") {
-                this.deleteFolder(folderName)
+                this.deleteFolder(folderId)
             } else {
                 // clientX : Coordonnée X du pointeur de la souris
                 this.contextMenu.x = event.clientX
@@ -153,20 +153,27 @@ export default {
                 const token = this.getJwtToken()
 
                 const headers = {
-                    Authorization: `Bearer ${token}`
+                    Authorization: `Bearer ${token}`,
+                    'Content-Type': 'application/json'
                 };
 
-                const response = await axios.post(`${BASE_URL}/api/Categories`, this.folderInfo, { headers })
+                // Créer un dossier racine avec la nouvelle API
+                const newFolder = {
+                    name: this.folderInfo.name,
+                    parentId: null, // Dossier racine
+                    isPublic: false
+                };
+
+                const response = await axios.post(`${BASE_URL}/api/Folders`, newFolder, { headers });
 
                 if (response.status === 201) {
-                    console.log("Enregistrement d'une nouvelle categorie'.")
-
+                    console.log("Nouveau dossier créé avec succès.")
                 } else {
-                    console.error("Échec de l'enregistrement d'une nouvelle categorie.")
+                    console.error("Échec de la création du dossier.")
                 }
 
             } catch (error) {
-                console.error("Erreur lors de la soumission d'une nouvelle categorie:", error)
+                console.error("Erreur lors de la création du dossier:", error)
             }
             this.getAllFolders()
             this.resetFolderInfo()
@@ -184,10 +191,11 @@ export default {
                     Authorization: `Bearer ${token}`
                 };
 
-                const response = await axios.get(`${BASE_URL}/api/Categories/user`, { headers })
+                // Utiliser la nouvelle API pour récupérer les dossiers racine
+                const response = await axios.get(`${BASE_URL}/api/Folders/root`, { headers });
 
                 if (response.status === 200) {
-                    this.folders = response.data
+                    this.folders = response.data;
                     this.folders.sort((a, b) => {
                         const nameA = a.name.toUpperCase()
                         const nameB = b.name.toUpperCase()
@@ -201,37 +209,42 @@ export default {
                         return 0;
                     });
                 } else {
-                    console.error("Échec de la récupération des catégories.")
+                    console.error("Échec de la récupération des dossiers.")
                 }
             } catch (error) {
-                console.error("Erreur lors de la récupération des catégories :", error)
+                console.error("Erreur lors de la récupération des dossiers :", error)
             }
         },
 
-        async deleteFolder(folderName) {
+        async deleteFolder(folderId) {
             try {
                 const token = this.getJwtToken()
 
                 const headers = {
-                    Authorization: `Bearer ${token}`,
+                    Authorization: `Bearer ${token}`
                 };
 
-                const response = await axios.delete(`${BASE_URL}/api/Categories/${folderName}`, { headers });
+                // Supprimer le dossier avec la nouvelle API
+                const response = await axios.delete(`${BASE_URL}/api/Folders/${folderId}`, { headers });
 
                 if (response.status === 204) {
-                    console.log("Categorie supprimée avec succès.")
+                    console.log("Dossier supprimé avec succès.")
                     this.getAllFolders()
                     this.contextMenu.isVisible = false
                 } else {
-                    console.error("Échec de la suppression de la catégorie.")
+                    console.error("Échec de la suppression du dossier.")
                 }
             } catch (error) {
-                console.error("Erreur lors de la suppression de la catégorie :", error);
+                console.error("Erreur lors de la suppression du dossier :", error);
             }
         },
 
-        navigateToFolder(folderName) {
-            this.$router.push(`/folders/${folderName}`)
+        navigateToFolder(folderId) {
+            // Trouver le nom du dossier à partir de son ID pour conserver la compatibilité avec les routes
+            const folder = this.folders.find(f => f.id === folderId);
+            if (folder) {
+                this.$router.push(`/folders/${folder.name}?folderId=${folderId}`);
+            }
         },
 
         getJwtToken() {

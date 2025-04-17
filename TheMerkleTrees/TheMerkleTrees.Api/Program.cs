@@ -8,6 +8,7 @@ using TheMerkleTrees.Domain.Interfaces.Repositories;
 using TheMerkleTrees.Infrastructure.Configurations;
 using TheMerkleTrees.Infrastructure.Repositories;
 using Microsoft.Extensions.Logging;
+using Prometheus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -57,6 +58,8 @@ builder.Services.AddSingleton<IFileRepository, FileRepository>();
 builder.Services.AddSingleton<ICategoryRepository, CategoryRepository>();
 builder.Services.AddSingleton<IUserRepository, UserRepository>();
 builder.Services.AddSingleton<IShortcutRepository, ShortcutRepository>();
+builder.Services.AddScoped<IFolderRepository, FolderRepository>();
+
 
 builder.Services.AddHttpContextAccessor();
 
@@ -110,6 +113,9 @@ app.UseCors("SpecificOrigins");
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.UseHttpMetrics();
+app.MapMetrics();
 
 app.MapControllers();
 

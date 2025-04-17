@@ -10,7 +10,8 @@ public static class UserMapper
         {
             Id = entity.Id,
             Email = entity.Email,
-            PasswordHash = entity.PasswordHash
+            PasswordHash = entity.PasswordHash,
+            EncryptionKey = entity.EncryptionKey
         };
     }
 
@@ -20,7 +21,8 @@ public static class UserMapper
         {
             Id = user.Id,
             Email = user.Email,
-            PasswordHash = user.PasswordHash
+            PasswordHash = user.PasswordHash,
+            EncryptionKey = user.EncryptionKey
         };
     }
 }
