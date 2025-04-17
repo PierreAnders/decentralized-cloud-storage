@@ -31,7 +31,6 @@
     
     <!-- Liste des sous-dossiers -->
     <div v-if="subfolders.length > 0" class="w-3/4 mx-auto mt-8 md:w-2/3 lg:w-1/2">
-      <h2 class="mb-4 text-sm text-light-gray">Sous-dossiers</h2>
       <ul class="flex flex-col">
         <li v-for="folder in subfolders" :key="folder.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
           <div class="flex justify-between w-full">
@@ -56,7 +55,6 @@
     
     <!-- Liste des fichiers -->
     <ul class="flex flex-col w-3/4 mx-auto mt-8 mb-8 md:w-2/3 lg:w-1/2">
-      <h2 class="mb-4 text-sm text-light-gray">Fichiers</h2>
       <li v-for="file in processedFileList" :key="file.id" class="flex flex-col justify-between mt-4 text-white md:flex-row">
         <div class="flex justify-between w-full">
           <div class="flex items-center space-x-2">
@@ -84,7 +82,18 @@
     </ul>
     
     <!-- Actions -->
-    <div class="flex justify-center space-x-8">
+    <div class="pt-4 flex justify-center space-x-8">
+     
+      <!-- Créer un sous-dossier -->
+      <div class="flex flex-col justify-center">
+        <div class="flex flex-col justify-center cursor-pointer text-light-gray" @click="showCreateFolderModal">
+          <IconNewFolder :color="'#828282'" class="pb-2 mx-auto transition-transform transform w-24 hover:scale-110" />
+        </div>
+        <div class="flex flex-col items-center">
+          <h2 class="text-light-gray text-sm">Créer un sous-dossier</h2>
+        </div>
+      </div>
+      
       <!-- Ajouter un fichier -->
       <div class="flex flex-col justify-center">
         <label for="fileInput" class="text-light-gray">
@@ -92,28 +101,18 @@
             <IconUpload class="pb-2 mx-auto transition-transform transform w-14 hover:scale-110" />
           </div>
           <input type="file" id="fileInput" ref="fileInput"
-            accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.html,.mp3,.mp4,.png,.jpg,.jpeg,.gif,mpeg,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov,.wmv,.mkv,.flv,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov"
-            class="p-2 border rounded-md bg-neutral-300 text-neutral-800 focus:outline-none focus:border-amber-800"
-            @change="showFileMetadataModal" style="display: none" />
+          accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.html,.mp3,.mp4,.png,.jpg,.jpeg,.gif,mpeg,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov,.wmv,.mkv,.flv,.webm,.ogg,.wav,.flac,.mp3,.mp4,.avi,.mov"
+          class="pb-2 border rounded-md bg-neutral-300 text-neutral-800 focus:outline-none focus:border-amber-800"
+          @change="showFileMetadataModal" style="display: none" />
         </label>
         <div class="flex flex-col items-center">
           <h2 class="text-light-gray text-sm">Ajouter un fichier</h2>
-          <div class="mt-1">
+          <!-- <div class="mt-1">
             <label for="isPublic" class="text-light-gray text-sm mr-2">Public</label>
             <input type="checkbox" class="opacity-90" name="isPublic" id="isPublic" v-model="isPublic" />
-          </div>
+          </div> -->
         </div>
-      </div>
-      
-      <!-- Créer un sous-dossier -->
-      <div class="flex flex-col justify-center">
-        <div class="flex flex-col justify-center cursor-pointer text-light-gray" @click="showCreateFolderModal">
-          <IconNewFolder class="pb-2 mx-auto transition-transform transform w-14 hover:scale-110" />
-        </div>
-        <div class="flex flex-col items-center">
-          <h2 class="text-light-gray text-sm">Créer un sous-dossier</h2>
-        </div>
-      </div>
+      </div>   
     </div>
     
     <!-- Modal pour créer/renommer un dossier -->
@@ -817,9 +816,11 @@ export default {
     },
 
     displayTextFile(textData, openInNewWindow = false) {
-      if (openInNewWindow) {
-        const newTab = window.open();
-        newTab.document.write("<pre>" + textData + "</pre>");
+      if (process.client) {
+        if (openInNewWindow) {
+          const newTab = window.open();
+          newTab.document.write("<pre>" + textData + "</pre>");
+        }
       }
     },
 
