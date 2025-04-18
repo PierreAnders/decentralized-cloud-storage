@@ -11,7 +11,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
+    env:
+      VITE_BASE_URL: ${{ secrets.VITE_BASE_URL }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
