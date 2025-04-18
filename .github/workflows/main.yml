@@ -17,6 +17,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Create .env file
+      run: |
+        echo "VITE_BASE_URL=${{ secrets.VITE_BASE_URL }}" > .env
+
     - name: Set up Docker Compose
       run: |
         curl -L "https://github.com/docker/compose/releases/download/v2.23.0/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
