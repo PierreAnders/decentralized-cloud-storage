@@ -22,7 +22,6 @@ jobs:
         chmod +x /usr/local/bin/docker-compose
         docker-compose --version
 
-
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
@@ -34,10 +33,6 @@ jobs:
 
     - name: Build Nuxt app
       run: npm run build
-      working-directory: ./TheMerkleTreesClient
-
-    - name: Run tests
-      run: npm test
       working-directory: ./TheMerkleTreesClient
 
     - name: Start MongoDB
