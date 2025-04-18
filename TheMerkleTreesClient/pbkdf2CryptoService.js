@@ -1,15 +1,13 @@
 // pbkdf2CryptoService.js
-const cryptoSubtle = window.crypto.subtle;
-const cryptoRandom = window.crypto;
 
 // Constantes cryptographiques
 const CRYPTO_CONFIG = {
   SALT_SIZE: 16,
   IV_SIZE: 12,
-  PBKDF2_ITERATIONS: 310000, // Augmenté selon recommandation OWASP 2023
+  PBKDF2_ITERATIONS: 310000,
   HASH_ALGORITHM: 'SHA-256',
   KEY_LENGTH: 256,
-  PASSWORD_EXPIRY_MS: 30 * 60 * 1000, // 30 minutes
+  PASSWORD_EXPIRY_MS: 30 * 60 * 1000,
   PASSWORD_MIN_LENGTH: 8,
   STORAGE_KEY: 'encryptedAuthData'
 };
@@ -20,6 +18,17 @@ const pbkdf2CryptoService = {
   derivedKeyCache: null,
   saltCache: null,
   masterKey: null,
+
+  // Méthode pour accéder de manière sécurisée à l'API Crypto
+  getCrypto() {
+    if (typeof window === 'undefined' || !window.crypto) {
+      throw new Error('Crypto API non disponible');
+    }
+    return {
+      subtle: window.crypto.subtle,
+      random: window.crypto
+    };
+  },
 
   // Validation du mot de passe
   validatePassword(password) {
@@ -34,16 +43,13 @@ const pbkdf2CryptoService = {
     if (this.validatePassword(password)) {
       this.userPassword = password;
       this.passwordTimestamp = Date.now();
-      this.derivedKeyCache = null; // Invalider le cache de clé
+      this.derivedKeyCache = null;
       this.saltCache = null;
-      
-      // Générer une clé maître pour cette session
       this._generateMasterKey();
     }
   },
 
   getUserPassword() {
-    // Vérifier si le mot de passe a expiré
     if (this.passwordTimestamp && 
         (Date.now() - this.passwordTimestamp > CRYPTO_CONFIG.PASSWORD_EXPIRY_MS)) {
       this.clearUserPassword();
@@ -62,18 +68,20 @@ const pbkdf2CryptoService = {
     this.derivedKeyCache = null;
     this.saltCache = null;
     this.masterKey = null;
-    sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
+    }
   },
 
-  // Génère une clé maître pour chiffrer les données en session
   async _generateMasterKey() {
     try {
-      this.masterKey = await cryptoSubtle.generateKey(
+      const { subtle } = this.getCrypto();
+      this.masterKey = await subtle.generateKey(
         {
           name: 'AES-GCM',
           length: CRYPTO_CONFIG.KEY_LENGTH
         },
-        true, // extractable
+        true,
         ['encrypt', 'decrypt']
       );
       return this.masterKey;
@@ -83,24 +91,23 @@ const pbkdf2CryptoService = {
     }
   },
 
-  // Chiffre les données avec la clé maître
   async _encryptWithMasterKey(data) {
     if (!this.masterKey) {
       await this._generateMasterKey();
     }
     
-    const iv = cryptoRandom.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
+    const { subtle, random } = this.getCrypto();
+    const iv = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
     const encoder = new TextEncoder();
     const dataBuffer = encoder.encode(JSON.stringify(data));
     
-    const encryptedData = await cryptoSubtle.encrypt(
+    const encryptedData = await subtle.encrypt(
       { name: 'AES-GCM', iv },
       this.masterKey,
       dataBuffer
     );
     
-    // Exporter la clé maître pour pouvoir la stocker
-    const exportedKey = await cryptoSubtle.exportKey('raw', this.masterKey);
+    const exportedKey = await subtle.exportKey('raw', this.masterKey);
     
     return {
       encryptedData: this.arrayBufferToBase64(encryptedData),
@@ -109,14 +116,13 @@ const pbkdf2CryptoService = {
     };
   },
 
-  // Déchiffre les données avec une clé exportée
   async _decryptWithExportedKey(encryptedDataBase64, ivBase64, exportedKeyBase64) {
+    const { subtle } = this.getCrypto();
     const encryptedData = this.base64ToArrayBuffer(encryptedDataBase64);
     const iv = this.base64ToArrayBuffer(ivBase64);
     const exportedKey = this.base64ToArrayBuffer(exportedKeyBase64);
     
-    // Importer la clé
-    const key = await cryptoSubtle.importKey(
+    const key = await subtle.importKey(
       'raw',
       exportedKey,
       { name: 'AES-GCM', length: CRYPTO_CONFIG.KEY_LENGTH },
@@ -124,7 +130,7 @@ const pbkdf2CryptoService = {
       ['decrypt']
     );
     
-    const decryptedBuffer = await cryptoSubtle.decrypt(
+    const decryptedBuffer = await subtle.decrypt(
       { name: 'AES-GCM', iv },
       key,
       encryptedData
@@ -137,9 +143,8 @@ const pbkdf2CryptoService = {
   },
 
   async rememberPassword(remember) {
-    if (remember && this.userPassword) {
+    if (remember && this.userPassword && typeof window !== 'undefined') {
       try {
-        // Chiffrer le mot de passe et le timestamp avant de les stocker
         const dataToStore = {
           password: this.userPassword,
           timestamp: this.passwordTimestamp
@@ -149,37 +154,34 @@ const pbkdf2CryptoService = {
         sessionStorage.setItem(CRYPTO_CONFIG.STORAGE_KEY, JSON.stringify(encryptedData));
       } catch (error) {
         console.error('Erreur lors du stockage sécurisé du mot de passe:', error);
-        // En cas d'erreur, ne pas stocker le mot de passe
         sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
       }
-    } else {
+    } else if (typeof window !== 'undefined') {
       sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
     }
   },
 
   async retrievePassword() {
+    if (typeof window === 'undefined') return null;
+    
     const storedData = sessionStorage.getItem(CRYPTO_CONFIG.STORAGE_KEY);
     
     if (storedData) {
       try {
         const { encryptedData, iv, key } = JSON.parse(storedData);
-        
-        // Déchiffrer les données stockées
         const decryptedData = await this._decryptWithExportedKey(encryptedData, iv, key);
         const { password, timestamp } = decryptedData;
         
-        // Vérifier si le mot de passe a expiré
         if (Date.now() - timestamp > CRYPTO_CONFIG.PASSWORD_EXPIRY_MS) {
           sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
           return null;
         }
         
-        // Restaurer le mot de passe et le timestamp
         this.userPassword = password;
         this.passwordTimestamp = timestamp;
         
-        // Importer la clé maître
-        this.masterKey = await cryptoSubtle.importKey(
+        const { subtle } = this.getCrypto();
+        this.masterKey = await subtle.importKey(
           'raw',
           this.base64ToArrayBuffer(key),
           { name: 'AES-GCM', length: CRYPTO_CONFIG.KEY_LENGTH },
@@ -197,7 +199,6 @@ const pbkdf2CryptoService = {
     return null;
   },
 
-  // Utilitaires de conversion
   arrayBufferToBase64(buffer) {
     const bytes = new Uint8Array(buffer);
     let binary = '';
@@ -216,9 +217,9 @@ const pbkdf2CryptoService = {
     return bytes.buffer;
   },
 
-  // Dériver une clé à partir d'un mot de passe et d'un sel
   async deriveKey(password, salt, useCache = false) {
-    // Utiliser le cache si demandé et disponible avec le même sel
+    const { subtle } = this.getCrypto();
+    
     if (useCache && this.derivedKeyCache && this.saltCache && 
         this.arrayBufferEquals(salt, this.saltCache)) {
       return this.derivedKeyCache;
@@ -227,8 +228,7 @@ const pbkdf2CryptoService = {
     const encoder = new TextEncoder();
     const passwordBuffer = encoder.encode(password);
 
-    // Importer le mot de passe comme clé brute
-    const importedKey = await cryptoSubtle.importKey(
+    const importedKey = await subtle.importKey(
       'raw',
       passwordBuffer,
       { name: 'PBKDF2' },
@@ -236,8 +236,7 @@ const pbkdf2CryptoService = {
       ['deriveKey']
     );
 
-    // Dériver une clé AES-GCM à partir du mot de passe
-    const key = await cryptoSubtle.deriveKey(
+    const key = await subtle.deriveKey(
       {
         name: 'PBKDF2',
         salt: salt,
@@ -246,11 +245,10 @@ const pbkdf2CryptoService = {
       },
       importedKey,
       { name: 'AES-GCM', length: CRYPTO_CONFIG.KEY_LENGTH },
-      true, // extractable pour pouvoir l'utiliser avec CryptoKey API
+      true,
       ['encrypt', 'decrypt']
     );
 
-    // Mettre en cache si demandé
     if (useCache) {
       this.derivedKeyCache = key;
       this.saltCache = salt;
@@ -259,7 +257,6 @@ const pbkdf2CryptoService = {
     return key;
   },
 
-  // Comparer deux ArrayBuffers
   arrayBufferEquals(buf1, buf2) {
     if (buf1 === buf2) return true;
     if (buf1.byteLength !== buf2.byteLength) return false;
@@ -273,32 +270,24 @@ const pbkdf2CryptoService = {
     return true;
   },
 
-  // Chiffrer un fichier en utilisant CryptoKey
   async encryptFile(file) {
     if (!this.hasUserPassword()) {
       throw new Error("Mot de passe utilisateur non défini");
     }
 
-    // Générer un sel aléatoire
-    const salt = cryptoRandom.getRandomValues(new Uint8Array(CRYPTO_CONFIG.SALT_SIZE));
+    const { subtle, random } = this.getCrypto();
+    const salt = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.SALT_SIZE));
+    const iv = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
 
-    // Générer un IV aléatoire
-    const iv = cryptoRandom.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
-
-    // Dériver la clé
     const key = await this.deriveKey(this.userPassword, salt, true);
-
-    // Lire le fichier
     const fileBuffer = await file.arrayBuffer();
     
-    // Chiffrer le fichier
-    const encryptedBuffer = await cryptoSubtle.encrypt(
+    const encryptedBuffer = await subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
       fileBuffer
     );
 
-    // Créer un nouveau fichier avec les données chiffrées
     const encryptedFile = new File(
       [encryptedBuffer],
       file.name,
@@ -312,22 +301,19 @@ const pbkdf2CryptoService = {
     };
   },
 
-  // Déchiffrer des données en utilisant CryptoKey
   async decryptData(encryptedData, saltBase64, ivBase64) {
     if (!this.hasUserPassword()) {
       throw new Error("Mot de passe utilisateur non défini ou expiré");
     }
 
-    // Convertir le sel et l'IV de base64 en ArrayBuffer
+    const { subtle } = this.getCrypto();
     const salt = this.base64ToArrayBuffer(saltBase64);
     const iv = this.base64ToArrayBuffer(ivBase64);
 
-    // Dériver la clé (utiliser le cache si possible)
     const key = await this.deriveKey(this.userPassword, salt, true);
 
     try {
-      // Déchiffrer les données
-      const decryptedBuffer = await cryptoSubtle.decrypt(
+      const decryptedBuffer = await subtle.decrypt(
         { name: 'AES-GCM', iv },
         key,
         encryptedData
@@ -339,32 +325,26 @@ const pbkdf2CryptoService = {
     }
   },
 
-  // Chiffrer les métadonnées en utilisant CryptoKey
   async encryptMetadata(metadata) {
     if (!this.hasUserPassword()) {
       throw new Error("Mot de passe utilisateur non défini ou expiré");
     }
 
-    // Générer un sel et un IV uniques pour les métadonnées
-    const salt = cryptoRandom.getRandomValues(new Uint8Array(CRYPTO_CONFIG.SALT_SIZE));
-    const iv = cryptoRandom.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
+    const { subtle, random } = this.getCrypto();
+    const salt = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.SALT_SIZE));
+    const iv = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
 
-    // Dériver la clé à partir du mot de passe et du sel
     const key = await this.deriveKey(this.userPassword, salt, false);
-
-    // Convertir les métadonnées en JSON puis en ArrayBuffer
     const metadataString = JSON.stringify(metadata);
     const encoder = new TextEncoder();
     const metadataBuffer = encoder.encode(metadataString);
 
-    // Chiffrer les métadonnées
-    const encryptedBuffer = await cryptoSubtle.encrypt(
+    const encryptedBuffer = await subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
       metadataBuffer
     );
 
-    // Convertir en base64 pour le stockage/transmission
     const encryptedBase64 = this.arrayBufferToBase64(encryptedBuffer);
 
     return {
@@ -374,29 +354,25 @@ const pbkdf2CryptoService = {
     };
   },
 
-  // Déchiffrer les métadonnées en utilisant CryptoKey
   async decryptMetadata(encryptedMetadata, metadataSalt, metadataIV) {
     if (!this.hasUserPassword()) {
       throw new Error("Mot de passe utilisateur non défini ou expiré");
     }
 
-    // Convertir de base64 à ArrayBuffer
+    const { subtle } = this.getCrypto();
     const encryptedBuffer = this.base64ToArrayBuffer(encryptedMetadata);
     const saltBuffer = this.base64ToArrayBuffer(metadataSalt);
     const ivBuffer = this.base64ToArrayBuffer(metadataIV);
 
-    // Dériver la clé (sans utiliser le cache car sel différent)
     const key = await this.deriveKey(this.userPassword, saltBuffer, false);
 
     try {
-      // Déchiffrer
-      const decryptedBuffer = await cryptoSubtle.decrypt(
+      const decryptedBuffer = await subtle.decrypt(
         { name: 'AES-GCM', iv: ivBuffer },
         key,
         encryptedBuffer
       );
 
-      // Convertir en chaîne JSON puis parser
       const decoder = new TextDecoder();
       const decryptedString = decoder.decode(decryptedBuffer);
 
@@ -406,12 +382,10 @@ const pbkdf2CryptoService = {
     }
   },
 
-  // Méthode pour gérer les erreurs de chiffrement/déchiffrement
   handleCryptoError(error) {
     console.error("Erreur cryptographique:", error);
     
     if (error.message && error.message.includes("déchiffrement")) {
-      // Problème probable de mot de passe incorrect
       this.clearUserPassword();
       return {
         type: "password_error",
