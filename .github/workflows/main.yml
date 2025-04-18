@@ -27,6 +27,14 @@ jobs:
         chmod +x /usr/local/bin/docker-compose
         docker-compose --version
 
+    - name: Set up .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: '9'
+
+    - name: Build .NET API
+      run: dotnet build ./TheMerkleTrees/TheMerkleTrees.Api --configuration Release
+
     - name: Set up Node.js
       uses: actions/setup-node@v3
       with:
