@@ -48,8 +48,13 @@ jobs:
     - name: Start IPFS
       run: docker-compose up -d ipfs
 
+    - name: Install Promtool
+      run: |
+        wget https://github.com/prometheus/prometheus/releases/download/v2.43.0/prometheus-2.43.0.linux-amd64.tar.gz
+        tar xvfz prometheus-*.tar.gz
+        sudo mv prometheus-*/promtool /usr/local/bin/
+        promtool --version
+
     - name: Check Prometheus config
-      uses: peimanja/promtool-github-action@v1
-      with:
-        action: 'check_config'
-        config_path: './prometheus.yml'
+      run: promtool check config ./prometheus.yml
+
