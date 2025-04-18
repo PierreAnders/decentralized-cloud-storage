@@ -1,0 +1,53 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Docker Compose
+      uses: docker/compose-action@v2
+      with:
+        compose-file: "./docker-compose.yml"
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '18'
+
+    - name: Install dependencies
+      run: npm install
+      working-directory: ./TheMerkleTreesClient
+
+    - name: Build Nuxt app
+      run: npm run build
+      working-directory: ./TheMerkleTreesClient
+
+    - name: Run tests
+      run: npm test
+      working-directory: ./TheMerkleTreesClient
+
+    - name: Start MongoDB
+      uses: supercharge/mongodb-github-action@1.6.0
+      with:
+        mongodb-version: '4.4'
+
+    - name: Start IPFS
+      run: docker-compose up -d ipfs
+
+    - name: Check Prometheus config
+      uses: peimanja/promtool-github-action@v1
+      with:
+        action: 'check_config'
+        config_path: './prometheus.yml'
