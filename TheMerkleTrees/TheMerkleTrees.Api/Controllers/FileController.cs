@@ -21,9 +21,9 @@ namespace TheMerkleTrees.Api.Controllers
         private readonly ILogger<FilesController> _logger;
 
         public FilesController(
-            IFileRepository fileRepository, 
+            IFileRepository fileRepository,
             IFolderRepository folderRepository,
-            HttpClient httpClient, 
+            HttpClient httpClient,
             IConfiguration configuration,
             ILogger<FilesController> logger)
         {
@@ -50,9 +50,9 @@ namespace TheMerkleTrees.Api.Controllers
                 return StatusCode(500, "Une erreur est survenue lors de la création du fichier");
             }
         }
-        
-        [HttpDelete("{name}")]
-        public async Task<IActionResult> Delete(string name)
+
+        [HttpDelete("{id}")]
+        public async Task<IActionResult> Delete(string id)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
             if (userId == null)
@@ -62,13 +62,169 @@ namespace TheMerkleTrees.Api.Controllers
 
             try
             {
-                await _fileRepository.RemoveAsync(name, userId);
+                var file = await _fileRepository.GetByIdAsync(id);
+                if (file == null || file.Owner != userId)
+                {
+                    return NotFound("Fichier non trouvé ou accès non autorisé.");
+                }
+
+                // Vérifier si d'autres utilisateurs utilisent le même fichier
+                var otherUsersWithSameFile =
+                    await _fileRepository.CountFilesByHashAsync(file.Hash, excludeUserId: userId);
+
+                // Supprimer physiquement seulement si personne d'autre n'utilise le fichier
+                if (otherUsersWithSameFile == 0)
+                {
+                    await RemoveFileFromIPFS(file.Hash);
+                }
+
+                // Supprimer l'entrée de la base de données
+                await _fileRepository.RemoveAsync(id);
+
                 return NoContent();
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erreur lors de la suppression du fichier {FileName}", name);
+                _logger.LogError(ex, "Erreur lors de la suppression du fichier {FileId}", id);
                 return StatusCode(500, "Une erreur est survenue lors de la suppression du fichier");
+            }
+        }
+
+        private async Task RemoveFileFromIPFS(string cid)
+        {
+            if (_isDevelopment)
+            {
+                await RemoveFileFromLocalIPFSNode(cid);
+            }
+            else
+            {
+                await RemoveFileFromIPFSAPI(cid);
+            }
+        }
+
+        private async Task RemoveFileFromLocalIPFSNode(string cid)
+        {
+            // 1. D'abord unpin le fichier
+            var unpinProcess = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "ipfs",
+                    Arguments = $"pin rm {cid}",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            unpinProcess.Start();
+            await unpinProcess.WaitForExitAsync();
+
+            if (unpinProcess.ExitCode != 0)
+            {
+                var error = await unpinProcess.StandardError.ReadToEndAsync();
+                _logger.LogWarning("Échec du unpin local: {Error}", error);
+                // On continue quand même car le block rm peut parfois fonctionner même si le unpin échoue
+            }
+
+            // 2. Ensuite supprimer le bloc
+            var rmProcess = new Process
+            {
+                StartInfo = new ProcessStartInfo
+                {
+                    FileName = "ipfs",
+                    Arguments = $"block rm {cid}",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                }
+            };
+
+            rmProcess.Start();
+            string output = await rmProcess.StandardOutput.ReadToEndAsync();
+            string errorRm = await rmProcess.StandardError.ReadToEndAsync();
+            await rmProcess.WaitForExitAsync();
+
+            if (rmProcess.ExitCode != 0)
+            {
+                _logger.LogError("Erreur lors de la suppression locale: {Error}", errorRm);
+                throw new Exception($"Échec de la suppression locale: {errorRm}");
+            }
+
+            _logger.LogInformation("Suppression locale réussie: {Output}", output);
+
+            // 3. Optionnel: lancer le garbage collector
+            try
+            {
+                var gcProcess = new Process
+                {
+                    StartInfo = new ProcessStartInfo
+                    {
+                        FileName = "ipfs",
+                        Arguments = "repo gc",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    }
+                };
+
+                gcProcess.Start();
+                await gcProcess.WaitForExitAsync();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Échec du garbage collector");
+            }
+        }
+
+        private async Task RemoveFileFromIPFSAPI(string cid)
+        {
+            try
+            {
+                // 1. D'abord unpin
+                var unpinRequest = new HttpRequestMessage(
+                    HttpMethod.Post, 
+                    $"{_ipfsApiUrl}/api/v0/pin/rm?arg={Uri.EscapeDataString(cid)}");
+
+                var unpinResponse = await _httpClient.SendAsync(unpinRequest);
+                if (!unpinResponse.IsSuccessStatusCode)
+                {
+                    var errorContent = await unpinResponse.Content.ReadAsStringAsync();
+                    _logger.LogWarning("Échec du unpin via API: {Error}", errorContent);
+                }
+
+                // 2. Ensuite supprimer le bloc
+                var rmRequest = new HttpRequestMessage(
+                    HttpMethod.Post, 
+                    $"{_ipfsApiUrl}/api/v0/block/rm?arg={Uri.EscapeDataString(cid)}");
+
+                var rmResponse = await _httpClient.SendAsync(rmRequest);
+                if (!rmResponse.IsSuccessStatusCode)
+                {
+                    var errorContent = await rmResponse.Content.ReadAsStringAsync();
+                    _logger.LogError("Échec de la suppression via API: {Error}", errorContent);
+                    throw new Exception($"Échec de la suppression via API: {errorContent}");
+                }
+
+                _logger.LogInformation("Suppression via API réussie");
+
+                // 3. Optionnel: lancer le garbage collector
+                try
+                {
+                    await _httpClient.PostAsync($"{_ipfsApiUrl}/api/v0/repo/gc", null);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Échec du garbage collector via API");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erreur lors de la connexion à l'API IPFS");
+                throw;
             }
         }
 
@@ -76,12 +232,12 @@ namespace TheMerkleTrees.Api.Controllers
         public async Task<ActionResult<List<File>>> GetRootFiles()
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
             }
-            
+
             try
             {
                 var files = await _fileRepository.GetFilesByUserAsync(userId);
@@ -98,12 +254,12 @@ namespace TheMerkleTrees.Api.Controllers
         public async Task<ActionResult<List<File>>> GetFilesByFolder(string folderId)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
             }
-            
+
             try
             {
                 // Vérifier que le dossier appartient à l'utilisateur
@@ -112,7 +268,7 @@ namespace TheMerkleTrees.Api.Controllers
                 {
                     return NotFound("Dossier non trouvé ou accès non autorisé");
                 }
-                
+
                 var files = await _fileRepository.GetFilesByFolderAsync(folderId);
                 return files;
             }
@@ -126,7 +282,7 @@ namespace TheMerkleTrees.Api.Controllers
         [HttpPost("upload")]
         [RequestSizeLimit(1073741824)] // 1 GB
         public async Task<IActionResult> UploadFile(
-            [FromForm] IFormFile file, 
+            [FromForm] IFormFile file,
             [FromForm] bool isPublic,
             [FromForm] string folderId = null,
             [FromForm] string salt = null,
@@ -136,12 +292,12 @@ namespace TheMerkleTrees.Api.Controllers
             [FromForm] string metadataIV = null)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
             }
-            
+
             if (file == null || file.Length == 0)
             {
                 return BadRequest("No file uploaded.");
@@ -158,7 +314,7 @@ namespace TheMerkleTrees.Api.Controllers
                         return BadRequest("Dossier non trouvé ou accès non autorisé");
                     }
                 }
-                
+
                 byte[] fileContent;
                 using (var ms = new MemoryStream())
                 {
@@ -169,13 +325,13 @@ namespace TheMerkleTrees.Api.Controllers
                 // Envoi direct du fichier à IPFS (déjà chiffré par le client ou fichier public)
                 var formData = new MultipartFormDataContent();
                 formData.Add(new ByteArrayContent(fileContent), "file", file.FileName);
-                
+
                 var response = await _httpClient.PostAsync(_ipfsApiUrl, formData);
                 response.EnsureSuccessStatusCode();
 
                 var result = await response.Content.ReadFromJsonAsync<AddResponse>();
                 var cid = result.Hash;
-                
+
                 // Création de l'enregistrement du fichier avec le sel, l'IV et les métadonnées chiffrées
                 var fileRecord = new File
                 {
@@ -208,7 +364,7 @@ namespace TheMerkleTrees.Api.Controllers
         public async Task<IActionResult> MoveFile([FromBody] MoveFileRequest request)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
@@ -250,7 +406,7 @@ namespace TheMerkleTrees.Api.Controllers
         public async Task<IActionResult> GetFile(string name)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
@@ -289,7 +445,7 @@ namespace TheMerkleTrees.Api.Controllers
         public async Task<IActionResult> GetCryptoParams(string name)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
@@ -304,8 +460,9 @@ namespace TheMerkleTrees.Api.Controllers
                 }
 
                 // Retourne le sel, l'IV et les métadonnées chiffrées associés au fichier
-                return Ok(new { 
-                    salt = file.Salt, 
+                return Ok(new
+                {
+                    salt = file.Salt,
                     iv = file.IV,
                     encryptedMetadata = file.EncryptedMetadata,
                     metadataSalt = file.MetadataSalt,
@@ -314,18 +471,20 @@ namespace TheMerkleTrees.Api.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erreur lors de la récupération des paramètres cryptographiques pour {FileName}", name);
-                return StatusCode(500, "Une erreur est survenue lors de la récupération des paramètres cryptographiques");
+                _logger.LogError(ex, "Erreur lors de la récupération des paramètres cryptographiques pour {FileName}",
+                    name);
+                return StatusCode(500,
+                    "Une erreur est survenue lors de la récupération des paramètres cryptographiques");
             }
         }
 
         [HttpPut("metadata/{name}")]
         public async Task<IActionResult> UpdateMetadata(
-            string name, 
+            string name,
             [FromBody] UpdateMetadataRequest request)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
@@ -356,10 +515,11 @@ namespace TheMerkleTrees.Api.Controllers
         }
 
         [HttpGet("search")]
-        public async Task<ActionResult<List<File>>> SearchFiles([FromQuery] string query, [FromQuery] string folderId = null)
+        public async Task<ActionResult<List<File>>> SearchFiles([FromQuery] string query,
+            [FromQuery] string folderId = null)
         {
             var userId = User.Claims.FirstOrDefault(c => c.Type == ClaimTypes.NameIdentifier)?.Value;
-            
+
             if (userId == null)
             {
                 return Unauthorized();
