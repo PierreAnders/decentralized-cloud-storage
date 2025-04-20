@@ -1,5 +1,5 @@
 <template>
-    <svg width="70" height="70" viewBox="0 0 76 53" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="40" height="40" viewBox="0 0 76 53" fill="none" xmlns="http://www.w3.org/2000/svg">
         <path d="M38 22.3479L38 51.4153" stroke="#3A3A3A" stroke-width="3" stroke-linecap="round" />
         <path d="M38.0002 22.3487L27.4118 31.6476" stroke="#3A3A3A" stroke-width="3" stroke-linecap="round" />
         <path d="M38.0001 22.3484L48.5883 31.6476" stroke="#3A3A3A" stroke-width="3" stroke-linecap="round" />

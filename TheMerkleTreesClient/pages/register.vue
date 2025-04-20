@@ -68,6 +68,7 @@ export default {
             email: this.email,
             password: this.password,
           });
+          alert("Inscription réussie");
           console.log("Inscription réussie");
           console.log("Response:", response);
         } catch (error) {

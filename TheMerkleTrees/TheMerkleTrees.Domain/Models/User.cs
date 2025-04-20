@@ -7,4 +7,5 @@ public class User
     public string Email { get; set; }
     
     public string PasswordHash { get; set; }
+    public string EncryptionKey { get; set; }
 }

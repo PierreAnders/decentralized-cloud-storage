@@ -12,13 +12,15 @@ public static class FileMapper
             Id = entity.Id,
             Hash = entity.Hash,
             Name = entity.Name,
-            Category = entity.Category,
             IsPublic = entity.IsPublic,
             Owner = entity.Owner,
-            EncryptionKey = entity.EncryptionKey,
-            Key = entity.Key,
             IV = entity.IV,
-            Extension = entity.Extension
+            Extension = entity.Extension,
+            Salt = entity.Salt,
+            FolderId = entity.FolderId,
+            EncryptedMetadata = entity.EncryptedMetadata,
+            MetadataSalt = entity.MetadataSalt,
+            MetadataIV = entity.MetadataIV
         };
     }
 
@@ -29,13 +31,15 @@ public static class FileMapper
             Id = file.Id,
             Hash = file.Hash,
             Name = file.Name,
-            Category = file.Category,
             IsPublic = file.IsPublic,
             Owner = file.Owner,
-            EncryptionKey = file.EncryptionKey,
-            Key = file.Key,
             IV = file.IV,
-            Extension = file.Extension
+            Extension = file.Extension,
+            Salt = file.Salt,
+            FolderId = file.FolderId,
+            EncryptedMetadata = file.EncryptedMetadata,
+            MetadataSalt = file.MetadataSalt,
+            MetadataIV = file.MetadataIV
         };
     }
 }
