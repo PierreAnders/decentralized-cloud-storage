@@ -740,9 +740,9 @@ export default {
             const decoder = new TextDecoder("utf-8");
             const decodedText = decoder.decode(fileContent);
 
-            // Stocker le contenu dans le localStorage
-            localStorage.setItem('draftContent', decodedText);
-            localStorage.setItem('fileNameWithoutExtension', fileNameWithoutExtension);
+            // Utiliser le textContentStore pour stocker le contenu
+            useTextContentStore().setTextContent(decodedText);
+            useTextContentStore().setFileNameWithoutExtension(fileNameWithoutExtension);
 
             this.$router.push("/note");
             return;

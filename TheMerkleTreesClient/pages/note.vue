@@ -7,8 +7,14 @@
     </div>
 
     <div class="flex flex-col items-center justify-center mt-10">
+      
+      <!-- Titre de la note -->
+      <input
+      class="w-56 w-3/4 h-8 px-4 mb-4 mx-auto text-sm text-white border-2 rounded-md bg-dark-gray placeholder-light-gray border-dark-gray focus:outline-none focus:border-blue"
+      type="text" v-model="note.title" placeholder="Titre de la note" @keyup.enter="saveContent">
+      
       <!-- Sélection du dossier -->
-      <div class="w-3/4 mb-4 md:w-2/3 lg:w-1/2">
+      <div class="w-3/4 mb-4 md:w-1/3 lg:w-1/4">
         <label class="block text-sm text-light-gray mb-1">Dossier de destination</label>
         <select v-model="selectedFolderId" class="w-full p-2 text-white bg-black border border-gray-700 rounded"
           @change="updateFolderPath">
@@ -18,16 +24,11 @@
           </option>
         </select>
       </div>
-
-      <!-- Titre de la note -->
-      <input
-        class="w-56 w-3/4 h-8 px-4 mb-4 mx-auto text-sm text-white border-2 rounded-md bg-dark-gray placeholder-light-gray border-dark-gray focus:outline-none focus:border-blue"
-        type="text" v-model="note.title" placeholder="Titre de la note" @keyup.enter="saveContent">
-
+      
       <!-- Barre d'outils de l'éditeur -->
       <div v-if="editor" class="toolbar">
         <button class="m-0.5" @click="editor.chain().focus().toggleBold().run()"
-          :class="{ 'is-active': editor.isActive('bold') }">
+        :class="{ 'is-active': editor.isActive('bold') }">
           <svg class="w-5 h-5 text-light-gray" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" width="24"
             height="24" fill="none" viewBox="0 0 24 24">
             <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -165,7 +166,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch } from 'vue';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import 'github-markdown-css/github-markdown-light.css';
@@ -186,6 +187,7 @@ import ImageResize from 'tiptap-extension-resize-image';
 import Heading from '@tiptap/extension-heading';
 import axios from "axios";
 import pbkdf2CryptoService from "../../pbkdf2CryptoService.js";
+import { useTextContentStore } from "../../textContentStore.js";
 
 const BASE_URL = import.meta.env.VITE_BASE_URL;
 
@@ -199,19 +201,27 @@ const selectedFolderId = ref('');
 const availableFolders = ref([]);
 const folderPath = ref([]);
 
+const textContentStore = useTextContentStore();
+
 onMounted(() => {
   if (process.client) {
     // Charger le brouillon existant
-    const draftContent = localStorage.getItem('draftContent');
+    const draftContent = textContentStore.textContent;
     if (draftContent && editor.value) {
       editor.value.commands.setContent(draftContent);
+    }
+
+    // Charger le titre du fichier
+    const fileNameWithoutExtension = textContentStore.fileNameWithoutExtension;
+    if (fileNameWithoutExtension) {
+      note.value.title = fileNameWithoutExtension;
     }
 
     // Configurer le watcher pour sauvegarder automatiquement
     watch(
       () => editor.value?.getHTML(),
       (newContent) => {
-        localStorage.setItem('draftContent', newContent);
+        textContentStore.setTextContent(newContent);
       },
       { deep: true }
     );
@@ -223,7 +233,7 @@ onMounted(() => {
 
 // Initialisation de l'éditeur
 const editor = useEditor({
-  content: process.client ? localStorage.getItem('draftContent') || '' : '',
+  content: textContentStore.textContent || '',
   extensions: [
     StarterKit,
     Heading.configure({
@@ -388,9 +398,8 @@ const saveContent = async () => {
     console.log('Réponse:', response.data);
 
     // Nettoyer le brouillon après sauvegarde
-    if (process.client) {
-      localStorage.removeItem('draftContent');
-    }
+    textContentStore.setTextContent('');
+    textContentStore.setFileNameWithoutExtension('');
   } catch (error) {
     console.error('Erreur:', error);
     alert('Échec de la sauvegarde: ' + error.message);
