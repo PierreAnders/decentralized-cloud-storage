@@ -32,6 +32,9 @@ public class FileRepository : IFileRepository
     public async Task<File?> GetAsync(string name, string userId) =>
         (await _filesCollection.Find(file => file.Name == name && file.Owner == userId).FirstOrDefaultAsync())?.ToDomain();
 
+    public async Task<File?> GetByIdAsync(string id) =>
+        (await _filesCollection.Find(file => file.Id == id).FirstOrDefaultAsync())?.ToDomain();
+
     public async Task<List<File>> GetFilesByUserAsync(string userId) =>
         (await _filesCollection.Find(file => file.Owner == userId).ToListAsync())
         .Select(entity => entity.ToDomain())
@@ -71,4 +74,16 @@ public class FileRepository : IFileRepository
 
     public async Task RemoveAsync(string name, string userId) =>
         await _filesCollection.DeleteOneAsync(x => x.Name == name && x.Owner == userId);
+
+    public async Task RemoveAsync(string id) =>
+        await _filesCollection.DeleteOneAsync(x => x.Id == id);
+    
+    public async Task<int> CountFilesByHashAsync(string hash, string excludeUserId)
+    {
+        var filter = Builders<FileEntity>.Filter.And(
+            Builders<FileEntity>.Filter.Eq(f => f.Hash, hash),
+            Builders<FileEntity>.Filter.Ne(f => f.Owner, excludeUserId)
+        );
+        return (int)await _filesCollection.CountDocumentsAsync(filter);
+    }
 }
