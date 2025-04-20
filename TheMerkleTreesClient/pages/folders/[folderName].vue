@@ -62,7 +62,7 @@
               <IconSubmenuDeleteFolder :color="'#553348'"
                 class="w-5 h-5 transition-transform transform md:w-6 md:h-6 hover:scale-110" />
             </button>
-        
+
             <button @click="downloadFile(file.name)">
               <IconDownload class="w-5 h-5 transition-transform transform md:w-6 md:h-6 hover:scale-110" />
             </button>
@@ -735,11 +735,15 @@ export default {
             this.displayTextFile(decodedText, true);
             return;
           }
-          else if (fileType === "html") {
+          if (fileType === "html") {
+            const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
             const decoder = new TextDecoder("utf-8");
             const decodedText = decoder.decode(fileContent);
-            useTextContentStore().setTextContent(decodedText);
-            useTextContentStore().setFileNameWithoutExtension(fileName);
+
+            // Stocker le contenu dans le localStorage
+            localStorage.setItem('draftContent', decodedText);
+            localStorage.setItem('fileNameWithoutExtension', fileNameWithoutExtension);
+
             this.$router.push("/note");
             return;
           }
