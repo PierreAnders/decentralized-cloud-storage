@@ -650,59 +650,59 @@ export default {
     },
 
     async openFile(fileName) {
-      try {
-        const jwtToken = this.getJwtToken();
-        const fileType = this.getFileType(fileName);
+  try {
+    const jwtToken = this.getJwtToken();
+    const fileType = this.getFileType(fileName);
 
-        if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
-          const password = await this.promptForPassword();
-          if (!password) {
-            alert("Mot de passe requis pour déchiffrer le fichier.");
-            return;
-          }
-          pbkdf2CryptoService.setUserPassword(password);
+    if (!this.isFilePublic(fileName) && !pbkdf2CryptoService.hasUserPassword()) {
+      const password = await this.promptForPassword();
+      if (!password) {
+        alert("Mot de passe requis pour déchiffrer le fichier.");
+        return;
+      }
+      pbkdf2CryptoService.setUserPassword(password);
+    }
+
+    const axiosConfig = {
+      headers: { Authorization: `Bearer ${jwtToken}` },
+      responseType: "arraybuffer",
+    };
+
+    const response = await axios.get(
+      `${BASE_URL}/api/Files/file/${fileName}`,
+      axiosConfig
+    );
+
+    let fileContent;
+
+    if (this.isFilePublic(fileName)) {
+      fileContent = response.data;
+    } else {
+      // Récupérer les paramètres cryptographiques (sel et IV)
+      const cryptoParamsResponse = await axios.get(
+        `${BASE_URL}/api/Files/crypto-params/${fileName}`,
+        {
+          headers: {
+            Authorization: `Bearer ${jwtToken}`,
+          },
         }
+      );
 
-        const axiosConfig = {
-          headers: { Authorization: `Bearer ${jwtToken}` },
-          responseType: "arraybuffer",
-        };
+      const salt = cryptoParamsResponse.data.salt;
+      const iv = cryptoParamsResponse.data.iv;
 
-        const response = await axios.get(
-          `${BASE_URL}/api/Files/file/${fileName}`,
-          axiosConfig
-        );
+      if (!salt) {
+        console.error("Sel de déchiffrement non trouvé pour ce fichier");
+        alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
+        return;
+      }
 
-        let fileContent;
-
-        if (this.isFilePublic(fileName)) {
-          fileContent = response.data;
-        } else {
-          // Récupérer les paramètres cryptographiques (sel et IV)
-          const cryptoParamsResponse = await axios.get(
-            `${BASE_URL}/api/Files/crypto-params/${fileName}`,
-            {
-              headers: {
-                Authorization: `Bearer ${jwtToken}`,
-              },
-            }
-          );
-
-          const salt = cryptoParamsResponse.data.salt;
-          const iv = cryptoParamsResponse.data.iv;
-
-          if (!salt) {
-            console.error("Sel de déchiffrement non trouvé pour ce fichier");
-            alert("Impossible de déchiffrer ce fichier. Le sel n'est pas disponible.");
-            return;
-          }
-
-          fileContent = await pbkdf2CryptoService.decryptData(
-            response.data,
-            salt,
-            iv
-          );
-        }
+      fileContent = await pbkdf2CryptoService.decryptData(
+        response.data,
+        salt,
+        iv
+      );
+    }
 
         if (
           fileType === "pdf" ||
@@ -735,18 +735,24 @@ export default {
             this.displayTextFile(decodedText, true);
             return;
           }
-          if (fileType === "html") {
-            const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
-            const decoder = new TextDecoder("utf-8");
-            const decodedText = decoder.decode(fileContent);
+    if (fileType === "html") {
+      const fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, "");
+      const decoder = new TextDecoder("utf-8");
+      const decodedText = decoder.decode(fileContent);
 
-            // Utiliser le textContentStore pour stocker le contenu
-            useTextContentStore().setTextContent(decodedText);
-            useTextContentStore().setFileNameWithoutExtension(fileNameWithoutExtension);
+      // Utiliser le textContentStore pour stocker le contenu
+      useTextContentStore().setTextContent(decodedText);
+      useTextContentStore().setFileNameWithoutExtension(fileNameWithoutExtension);
 
-            this.$router.push("/note");
-            return;
-          }
+      // Stocker l'ID du dossier parent
+      const file = this.fileList.find(f => f.name === fileName);
+      if (file) {
+        useTextContentStore().setParentFolderId(file.folderId);
+      }
+
+      this.$router.push("/note");
+      return;
+    }
           else if (fileType === "csv") {
             type_blob = "text/csv";
           }
@@ -784,17 +790,17 @@ export default {
         } else {
           console.error("Type de fichier non supporté :", fileType);
         }
-      } catch (error) {
-        console.error("Erreur lors de l'ouverture du fichier:", error);
+  } catch (error) {
+    console.error("Erreur lors de l'ouverture du fichier:", error);
 
-        if (error.message && error.message.includes("déchiffrement")) {
-          alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
-          pbkdf2CryptoService.clearUserPassword();
-        } else {
-          alert("Erreur lors de l'ouverture du fichier.");
-        }
-      }
-    },
+    if (error.message && error.message.includes("déchiffrement")) {
+      alert("Erreur de déchiffrement. Le mot de passe est peut-être incorrect.");
+      pbkdf2CryptoService.clearUserPassword();
+    } else {
+      alert("Erreur lors de l'ouverture du fichier.");
+    }
+  }
+},
 
     getFileType(fileName) {
       const parts = fileName.split(".");
