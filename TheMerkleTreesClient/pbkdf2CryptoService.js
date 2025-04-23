@@ -9,7 +9,6 @@ const CRYPTO_CONFIG = {
   KEY_LENGTH: 256,
   PASSWORD_EXPIRY_MS: 30 * 60 * 1000,
   PASSWORD_MIN_LENGTH: 8,
-  STORAGE_KEY: 'encryptedAuthData'
 };
 
 const pbkdf2CryptoService = {
@@ -50,7 +49,7 @@ const pbkdf2CryptoService = {
   },
 
   getUserPassword() {
-    if (this.passwordTimestamp && 
+    if (this.passwordTimestamp &&
         (Date.now() - this.passwordTimestamp > CRYPTO_CONFIG.PASSWORD_EXPIRY_MS)) {
       this.clearUserPassword();
       return null;
@@ -68,9 +67,6 @@ const pbkdf2CryptoService = {
     this.derivedKeyCache = null;
     this.saltCache = null;
     this.masterKey = null;
-    if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
-    }
   },
 
   async _generateMasterKey() {
@@ -95,20 +91,20 @@ const pbkdf2CryptoService = {
     if (!this.masterKey) {
       await this._generateMasterKey();
     }
-    
+
     const { subtle, random } = this.getCrypto();
     const iv = random.getRandomValues(new Uint8Array(CRYPTO_CONFIG.IV_SIZE));
     const encoder = new TextEncoder();
     const dataBuffer = encoder.encode(JSON.stringify(data));
-    
+
     const encryptedData = await subtle.encrypt(
       { name: 'AES-GCM', iv },
       this.masterKey,
       dataBuffer
     );
-    
+
     const exportedKey = await subtle.exportKey('raw', this.masterKey);
-    
+
     return {
       encryptedData: this.arrayBufferToBase64(encryptedData),
       iv: this.arrayBufferToBase64(iv),
@@ -121,7 +117,7 @@ const pbkdf2CryptoService = {
     const encryptedData = this.base64ToArrayBuffer(encryptedDataBase64);
     const iv = this.base64ToArrayBuffer(ivBase64);
     const exportedKey = this.base64ToArrayBuffer(exportedKeyBase64);
-    
+
     const key = await subtle.importKey(
       'raw',
       exportedKey,
@@ -129,98 +125,23 @@ const pbkdf2CryptoService = {
       false,
       ['decrypt']
     );
-    
+
     const decryptedBuffer = await subtle.decrypt(
       { name: 'AES-GCM', iv },
       key,
       encryptedData
     );
-    
+
     const decoder = new TextDecoder();
     const decryptedText = decoder.decode(decryptedBuffer);
-    
+
     return JSON.parse(decryptedText);
-  },
-
-  async rememberPassword(remember) {
-    if (remember && this.userPassword && typeof window !== 'undefined') {
-      try {
-        const dataToStore = {
-          password: this.userPassword,
-          timestamp: this.passwordTimestamp
-        };
-        
-        const encryptedData = await this._encryptWithMasterKey(dataToStore);
-        sessionStorage.setItem(CRYPTO_CONFIG.STORAGE_KEY, JSON.stringify(encryptedData));
-      } catch (error) {
-        console.error('Erreur lors du stockage sécurisé du mot de passe:', error);
-        sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
-      }
-    } else if (typeof window !== 'undefined') {
-      sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
-    }
-  },
-
-  async retrievePassword() {
-    if (typeof window === 'undefined') return null;
-    
-    const storedData = sessionStorage.getItem(CRYPTO_CONFIG.STORAGE_KEY);
-    
-    if (storedData) {
-      try {
-        const { encryptedData, iv, key } = JSON.parse(storedData);
-        const decryptedData = await this._decryptWithExportedKey(encryptedData, iv, key);
-        const { password, timestamp } = decryptedData;
-        
-        if (Date.now() - timestamp > CRYPTO_CONFIG.PASSWORD_EXPIRY_MS) {
-          sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
-          return null;
-        }
-        
-        this.userPassword = password;
-        this.passwordTimestamp = timestamp;
-        
-        const { subtle } = this.getCrypto();
-        this.masterKey = await subtle.importKey(
-          'raw',
-          this.base64ToArrayBuffer(key),
-          { name: 'AES-GCM', length: CRYPTO_CONFIG.KEY_LENGTH },
-          true,
-          ['encrypt', 'decrypt']
-        );
-        
-        return password;
-      } catch (error) {
-        console.error('Erreur lors de la récupération du mot de passe:', error);
-        sessionStorage.removeItem(CRYPTO_CONFIG.STORAGE_KEY);
-        return null;
-      }
-    }
-    return null;
-  },
-
-  arrayBufferToBase64(buffer) {
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    for (let i = 0; i < bytes.byteLength; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return btoa(binary);
-  },
-
-  base64ToArrayBuffer(base64) {
-    const binaryString = atob(base64);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-    return bytes.buffer;
   },
 
   async deriveKey(password, salt, useCache = false) {
     const { subtle } = this.getCrypto();
-    
-    if (useCache && this.derivedKeyCache && this.saltCache && 
+
+    if (useCache && this.derivedKeyCache && this.saltCache &&
         this.arrayBufferEquals(salt, this.saltCache)) {
       return this.derivedKeyCache;
     }
@@ -260,10 +181,10 @@ const pbkdf2CryptoService = {
   arrayBufferEquals(buf1, buf2) {
     if (buf1 === buf2) return true;
     if (buf1.byteLength !== buf2.byteLength) return false;
-    
+
     const dv1 = new Uint8Array(buf1);
     const dv2 = new Uint8Array(buf2);
-    
+
     for (let i = 0; i < buf1.byteLength; i++) {
       if (dv1[i] !== dv2[i]) return false;
     }
@@ -281,7 +202,7 @@ const pbkdf2CryptoService = {
 
     const key = await this.deriveKey(this.userPassword, salt, true);
     const fileBuffer = await file.arrayBuffer();
-    
+
     const encryptedBuffer = await subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
@@ -384,7 +305,7 @@ const pbkdf2CryptoService = {
 
   handleCryptoError(error) {
     console.error("Erreur cryptographique:", error);
-    
+
     if (error.message && error.message.includes("déchiffrement")) {
       this.clearUserPassword();
       return {
@@ -392,11 +313,29 @@ const pbkdf2CryptoService = {
         message: "Erreur de déchiffrement. Le mot de passe est peut-être incorrect ou a expiré."
       };
     }
-    
+
     return {
       type: "crypto_error",
       message: "Une erreur est survenue lors de l'opération cryptographique: " + error.message
     };
+  },
+
+  arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.byteLength; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  },
+
+  base64ToArrayBuffer(base64) {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
   }
 };
 
