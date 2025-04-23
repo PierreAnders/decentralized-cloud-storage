@@ -7,14 +7,8 @@
     </div>
 
     <div class="flex flex-col items-center justify-center mt-10">
-      
-      <!-- Titre de la note -->
-      <input
-      class="w-56 w-3/4 h-8 px-4 mb-4 mx-auto text-sm text-white border-2 rounded-md bg-dark-gray placeholder-light-gray border-dark-gray focus:outline-none focus:border-blue"
-      type="text" v-model="note.title" placeholder="Titre de la note" @keyup.enter="saveContent">
-      
       <!-- Sélection du dossier -->
-      <div class="w-3/4 mb-4 md:w-1/3 lg:w-1/4">
+      <div class="w-3/4 mb-4 md:w-2/3 lg:w-1/2">
         <label class="block text-sm text-light-gray mb-1">Dossier de destination</label>
         <select v-model="selectedFolderId" class="w-full p-2 text-white bg-black border border-gray-700 rounded"
           @change="updateFolderPath">
@@ -24,7 +18,12 @@
           </option>
         </select>
       </div>
-      
+
+      <!-- Titre de la note -->
+      <input
+        class="w-56 w-3/4 h-8 px-4 mb-4 mx-auto text-sm text-white border-2 rounded-md bg-dark-gray placeholder-light-gray border-dark-gray focus:outline-none focus:border-blue"
+        type="text" v-model="note.title" placeholder="Titre de la note" @keyup.enter="saveContent">
+
       <!-- Barre d'outils de l'éditeur -->
       <div v-if="editor" class="toolbar">
         <button class="m-0.5" @click="editor.chain().focus().toggleBold().run()"
@@ -215,6 +214,12 @@ onMounted(() => {
     const fileNameWithoutExtension = textContentStore.fileNameWithoutExtension;
     if (fileNameWithoutExtension) {
       note.value.title = fileNameWithoutExtension;
+    }
+
+    // Définir selectedFolderId en fonction du dossier parent
+    const parentFolderId = textContentStore.parentFolderId;
+    if (parentFolderId) {
+      selectedFolderId.value = parentFolderId;
     }
 
     // Configurer le watcher pour sauvegarder automatiquement

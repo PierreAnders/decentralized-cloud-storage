@@ -744,6 +744,12 @@ export default {
             useTextContentStore().setTextContent(decodedText);
             useTextContentStore().setFileNameWithoutExtension(fileNameWithoutExtension);
 
+            // Stocker l'ID du dossier parent
+            const file = this.fileList.find(f => f.name === fileName);
+            if (file) {
+              useTextContentStore().setParentFolderId(file.folderId);
+            }
+
             this.$router.push("/note");
             return;
           }
@@ -941,11 +947,6 @@ export default {
     },
 
     async promptForPassword() {
-      const storedPassword = await pbkdf2CryptoService.retrievePassword();
-      if (storedPassword) {
-        return storedPassword;
-      }
-
       return new Promise((resolve) => {
         const password = prompt("Veuillez entrer votre mot de passe pour chiffrer/déchiffrer le fichier:");
 
@@ -953,7 +954,6 @@ export default {
           const rememberPassword = confirm("Souhaitez-vous mémoriser ce mot de passe pour cette session?");
           if (rememberPassword) {
             pbkdf2CryptoService.setUserPassword(password);
-            pbkdf2CryptoService.rememberPassword(true);
           }
         }
 

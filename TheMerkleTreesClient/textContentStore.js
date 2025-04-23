@@ -4,6 +4,8 @@ export const useTextContentStore = defineStore('textContent', {
   state: () => ({
     textContent: '',
     fileNameWithoutExtension: '',
+    parentFolderId: null,
+    
   }),
   actions: {
     setTextContent(newContent) {
@@ -11,6 +13,9 @@ export const useTextContentStore = defineStore('textContent', {
     },
     setFileNameWithoutExtension(fileName) {
       this.fileNameWithoutExtension = fileName.replace(/\.[^/.]+$/, '');
+    },
+    setParentFolderId(id) {
+      this.parentFolderId = id;
     },
   },
 });
