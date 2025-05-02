@@ -19,7 +19,7 @@ builder.Services.AddCors(options =>
     options.AddPolicy("SpecificOrigins",
         policy =>
         {
-            policy.WithOrigins("http://localhost:3000")
+            policy.WithOrigins("http://localhost:3000", "https://localhost:3000", "https://pierreanders.com")
                    .AllowAnyMethod()
                    .AllowAnyHeader()
                    .AllowCredentials();

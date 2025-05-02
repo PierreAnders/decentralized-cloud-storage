@@ -765,9 +765,6 @@ export default {
           else if (fileType === "js") {
             type_blob = "application/javascript";
           }
-          else if (fileType === "css") {
-            type_blob = "text/css";
-          }
           else if (["mp3", "wav", "ogg"].includes(fileType)) {
             type_blob = fileType === "mp3" ? "audio/mpeg" :
               fileType === "wav" ? "audio/wav" :
